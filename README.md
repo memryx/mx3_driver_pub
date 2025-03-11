@@ -12,7 +12,8 @@
 
 This repo serves as a mirror of the Linux kernel driver for the MemryX MX3, along with the Python wrapper around the driver's [C API (libmemx.so)](https://developer.memryx.com/api/driver/driver.html), and binary copies of chip firmware and related tools.
 
-> **IMPORTANT**: This repo is for open-source reference and advanced users **only**. If you are looking to simply use MX3 hardware, **please** install the [MemryX SDK](https://developer.memryx.com) instead!
+
+**!🚨IMPORTANT🚨!**: This repo is for open-source reference and advanced users **only**. If you are looking to simply use MX3 hardware, **please** install the [MemryX SDK](https://developer.memryx.com) instead!
 
 
 ### Repository Overview
