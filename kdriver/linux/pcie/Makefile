@@ -10,6 +10,9 @@ all: driver
 driver:
 	make -C $(KERNELSRCDIR) M=$(PWD) EXTRA_CFLAGS="$(INCLUDES)" modules
 
+modules_install:
+	make -C $(KERNELSRCDIR) M=$(PWD) EXTRA_CFLAGS="$(INCLUDES)" modules_install
+
 app:
 	gcc memx_pcie_test.c -o app -I$(PWD)/../../include
 
