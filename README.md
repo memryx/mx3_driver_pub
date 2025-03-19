@@ -26,6 +26,7 @@ The repository is structured as follows.
 | `pymodule`         | Source for the Python wrapper around the [driver API](https://developer.memryx.com/api/driver/driver.html). [MIT](/pymodule/LICENSE.md)   |
 | `tools`            | Source for MX3 firmware checker and updater tools. [GPL](/tools/flash_update_tool/LICENSE.md) |
 | `firmware`         | MX3 firmware binary blobs. [See license here](https://developer.memryx.com/license.html#mx3-firmware-and-windows-driver). |
+| `meta-mx3-driver`  | BitBake meta for building the kdriver and firmware into a Yocto build. [MIT](/meta-mx3-driver/LICENSE.md) |
 
 
 ## Building
@@ -62,12 +63,17 @@ cd pymodule
 make all
 ```
 
+### BitBake
+
+See the [readme](/meta-mx3-driver/README.md).
+
 
 ## Licenses
 
 
 * `kdriver` and `flash update tool`: [GPLv2](/kdriver/LICENSE.md)
 * `pymodule`: [MIT](/pymodule/LICENSE.md)
+* `meta-mx3-driver`: [MIT](/meta-mx3-driver/LICENSE.md)
 * `firmware`: Proprietary. See details [here](https://developer.memryx.com/license.html#mx3-firmware-and-windows-driver). *TL;DR*: you're free to use and redistribute exact copies how ever you want, but do not modify, decompile, nor create derivatives.
 
 
