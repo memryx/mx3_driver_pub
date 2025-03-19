@@ -13,7 +13,7 @@ driver:
 
 modules_install:
 	make -C $(KERNEL_SRC) M=$(PWD) EXTRA_CFLAGS="$(INCLUDES)" modules_install
-	cp -v ../../../firmware/*.bin $(INSTALL_FW_PATH)
+	mkdir -p $(INSTALL_FW_PATH) && cp -v ../../../firmware/*.bin $(INSTALL_FW_PATH)
 
 
 clean:
