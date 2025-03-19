@@ -8,7 +8,7 @@ INSANE_SKIP:${PN}-dbg += "buildpaths"
 
 # Example: Pull source from a Git repository. Adjust SRC_URI as needed.
 SRC_URI = "git://github.com/memryx/mx3_driver_pub;protocol=https;branch=release"
-SRCREV = "c18e4427edc67f033f54522d98d3edc57d86fa5a"
+SRCREV = "${AUTOREV}"
 
 # Use the working directory provided by BitBake
 S = "${WORKDIR}/sources-unpack/git/kdriver/linux/pcie"
