@@ -83,7 +83,6 @@ make all
 
 * `kdriver` and `flash update tool`: [GPLv2](/kdriver/LICENSE.md)
 * `pymodule`: [MIT](/pymodule/LICENSE.md)
-* `meta-mx3-driver`: [MIT](/meta-mx3-driver/LICENSE.md)
 * `firmware`: Proprietary. See details [here](https://developer.memryx.com/license.html#mx3-firmware-and-windows-driver). *TL;DR*: you're free to use and redistribute exact copies how ever you want, but do not modify, decompile, nor create derivatives.
 
 
