@@ -26,8 +26,6 @@ The repository is structured as follows.
 | `pymodule`         | Source for the Python wrapper around the [driver API](https://developer.memryx.com/api/driver/driver.html). [MIT](/pymodule/LICENSE.md)   |
 | `tools`            | Source for MX3 firmware checker and updater tools. [GPL](/tools/flash_update_tool/LICENSE.md) |
 | `firmware`         | MX3 firmware binary blobs. [See license here](https://developer.memryx.com/license.html#mx3-firmware-and-windows-driver). |
-| `meta-mx3-driver`  | BitBake meta for building the kdriver and firmware into a Yocto build. [MIT](/meta-mx3-driver/LICENSE.md) |
-
 
 ## Building
 
@@ -44,9 +42,17 @@ cd kdriver/linux/pcie/
 make
 ```
 
+After building the module, you will also need to copy the firmware files to `/lib/firmware/`, e.g.
+
+```bash
+sudo cp firmware/* /lib/firmware/
+```
+
+Now you should be able to load the driver with `sudo insmod memx_cascade_plus_pcie.ko`.
+
 ### Firmware Tools
 
-These tools shouldn't require external dependencies other than a typical gcc toolchain. For each, simply `cd` to their folder and run:
+The firmware update tools shouldn't require external dependencies other than a typical gcc toolchain. For each, simply `cd` to their folder and run:
 
 ```bash
 make
@@ -54,18 +60,22 @@ make
 
 ### Python Module
 
-This module is normally bundled with the MemryX SDK [pip package](https://developer.memryx.com/get_started/install_tools.html), but can also be built from source here. You have to first install the `libmemx.so` library, which can be manually extracted from the [pre-built driver](https://developer.memryx.com/get_started/install_driver.html), either from the `.deb` or the `install.sh`.
+This module is normally bundled with the MemryX SDK [pip package](https://developer.memryx.com/get_started/install_tools.html), but can also be built from source here. You have to first install the `libmemx.so` library, which can be manually extracted from the [pre-built driver](https://developer.memryx.com/get_started/install_driver.html), either from the `.deb` or the `install.sh`, or from the [MxAccl repo](https://github.com/memryx/MxAccl/tree/release/misc/libmemx).
 
-Once `libmemx.so` and its header file, `memx.h` are available on your path, run:
+Copy the `libmemx.so` file to `/usr/lib/`, and copy the header to `/usr/include/memx/`, e.g.:
+
+```bash
+sudo cp libmemx.so /usr/lib/
+sudo mkdir -p /usr/include/memx
+sudo cp memx.h /usr/include/memx/
+```
+
+Once the library and header file are installed in your system, build the pymodule with:
 
 ```bash
 cd pymodule
 make all
 ```
-
-### BitBake
-
-See the [readme](/meta-mx3-driver/README.md).
 
 
 ## Licenses
