@@ -15,7 +15,6 @@ struct memx_pcie_dev *memx_get_device_by_index(u32 index)
 	down(&g_memx_add_device_mutex);
 	list_for_each_entry(memx_dev, &g_memx_pcie_device_list, device_list) {
 		if (memx_dev->minor_index == index) {
-			atomic_inc(&memx_dev->ref_count);
 			target = memx_dev;
 			break;
 		}

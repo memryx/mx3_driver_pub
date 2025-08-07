@@ -11,8 +11,8 @@
 #include "memx_fs.h"
 
 
-#define PCIE_VERSION "1.2.26"
-#define SDK_VERSION "1.2.0"
+#define PCIE_VERSION "1.2.40"
+#define SDK_RELEASE_VERSION "2.0"
 
 #define PCIE_NAME "memx_pcie_ai_chip"
 
@@ -58,6 +58,7 @@
 #define MXCNST_DATECODE				(0x40046f0c)
 #define MXCNST_BOOT_MODE			(0x20000100)
 #define MXCNST_CHIP_VERSION			(0x20000500)
+#define MXCNST_FW_SYS_TICK			(0x40046f14)
 
 enum memx_bar_id {
 	BAR0 = 0,
@@ -111,7 +112,7 @@ struct memx_pcie_dev {
 	struct list_head device_list;
 	struct pci_dev *pDev;
 	struct semaphore mutex;
-	atomic_t ref_count;
+	u32 reference_count;
 
 	struct memx_runtime_cfg rt_cfg;
 
@@ -137,6 +138,8 @@ struct memx_pcie_dev {
 	u32 xflow_vbuf_bar_offset;
 	struct cdev char_cdev;
 	struct cdev feature_cdev;
+
+	struct mutex   adminlock;
 };
 
 extern struct file_operations memx_feature_fops;

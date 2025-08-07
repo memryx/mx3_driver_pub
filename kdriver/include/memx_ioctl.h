@@ -13,12 +13,11 @@
 #define MAX_SUPPORT_GROUP_NUM (8)
 #define KBYTE (1024)
 
-// TODO: Do we need so many DFP download method?
 enum {
-	DFP_FROM_FIRMWARE		= 0,
-	DFP_FROM_USER			= 1,
-	DFP_FROM_SEPERATE_WTMEM  = 2,
-	DFP_FROM_SEPERATE_CONFIG = 3
+	DFP_RESERVED_0				= 0, //Remove Unsupport Option
+	DFP_RESERVED_1				= 1, //Remove Unsupport Option
+	DFP_FROM_SEPERATE_WTMEM		= 2,
+	DFP_FROM_SEPERATE_CONFIG	= 3
 };
 
 enum memx_chip_role {
@@ -30,14 +29,14 @@ enum memx_chip_role {
 };
 
 enum PCIE_FW_CMD_ID {
-	PCIE_CMD_WAIT_FOR_ACK_ONLY	  = 0,
-	PCIE_CMD_VENDOR_1 = 1,
+	PCIE_CMD_WAIT_FOR_ACK_ONLY		= 0,
+	PCIE_CMD_VENDOR_1				= 1,
 	PCIE_CMD_INIT_HOST_BUF_MAPPING  = 2,
 	PCIE_CMD_GET_HW_INFO			= 3,
-	PCIE_CMD_VENDOR_0			   = 4,
+	PCIE_CMD_VENDOR_0			    = 4,
 	PCIE_CMD_INIT_WTMEM_FMAP		= 5,
-	PCIE_CMD_RESET_MPU			  = 6,
-	PCIE_CMD_CONFIG_MPU_GROUP	   = 7,
+	PCIE_CMD_RESET_MPU			    = 6,
+	PCIE_CMD_CONFIG_MPU_GROUP	    = 7,
 	PCIE_CMD_SET_FEATURE			= 8,
 	PCIE_MAX_SUPPORT_FW_CMD
 };
@@ -48,9 +47,11 @@ enum PCIE_CMD_VENDOR_0_OPTION {
 };
 
 enum ADMIN_CMD_OPCODE {
-	ADMIN_CMD_SET_FEATURE = 0x1,
-	ADMIN_CMD_GET_FEATURE = 0x2,
-	ADMIN_CMD_MAX
+    MEMX_ADMIN_CMD_SET_FEATURE  = 0x1,
+    MEMX_ADMIN_CMD_GET_FEATURE  = 0x2,
+    MEMX_ADMIN_CMD_DOWNLOAD_DFP = 0x3,
+	MEMX_ADMIN_CMD_SELFTEST     = 0x4,
+    MEMX_ADMIN_CMD_MAX
 };
 
 enum CASCADE_PLUS_ADMINCMD_STATUS {
@@ -61,12 +62,12 @@ enum CASCADE_PLUS_ADMINCMD_STATUS {
 };
 
 enum CASCADE_PLUS_ADMINCMD_ERROR_STATUS {
-	ERROR_STATUS_NO_ERROR = 0x0,
-	ERROR_STATUS_PARAMETER_FAIL = 0x1,
-	ERROR_STATUS_OPCODE_NOT_SUPPORT_FAIL = 0x2,
-	ERROR_STATUS_FID_NOT_SUPPORT_FAIL = 0X3,
-	ERROR_STATUS_UNKNOWN_FAIL = 0x4,
-	ERROR_STATUS_TIMEOUT_FAIL = 0x5,
+	ERROR_STATUS_NO_ERROR 					= 0x0,
+	ERROR_STATUS_PARAMETER_FAIL 			= 0x1,
+	ERROR_STATUS_OPCODE_NOT_SUPPORT_FAIL 	= 0x2,
+	ERROR_STATUS_SUBOP_NOT_SUPPORT_FAIL 	= 0X3,
+	ERROR_STATUS_UNKNOWN_FAIL 				= 0x4,
+	ERROR_STATUS_TIMEOUT_FAIL 				= 0x5,
 	ERROR_STATUS_MAX
 };
 
@@ -76,13 +77,13 @@ struct mpu_group {
 };
 
 enum memx_pcie_bar_mode {
-	MEMXBAR_XFLOW256MB_SRAM1MB = 0,
-	MEMXBAR_SRAM1MB = 1,
-	MEMXBAR_XFLOW128MB64B_SRAM1MB = 2,
-	MEMXBAR_3BAR_BAR0VB_BAR2CI_16MB_BAR4SRAM = 3,
-	MEMXBAR_3BAR_BAR0VB_BAR2CI_64MB_BAR4SRAM = 4,
+	MEMXBAR_XFLOW256MB_SRAM1MB 					= 0,
+	MEMXBAR_SRAM1MB 							= 1,
+	MEMXBAR_XFLOW128MB64B_SRAM1MB 				= 2,
+	MEMXBAR_3BAR_BAR0VB_BAR2CI_16MB_BAR4SRAM 	= 3,
+	MEMXBAR_3BAR_BAR0VB_BAR2CI_64MB_BAR4SRAM 	= 4,
 
-	MEMXBAR_NOTVALID = 0xFF,
+	MEMXBAR_NOTVALID 							= 0xFF,
 	MEMXBAR_XFLOW128MB_SRAM1MB = MEMXBAR_NOTVALID,
 };
 
@@ -119,6 +120,7 @@ struct memx_mpu_size {
 	unsigned int flow_size[MEMX_TOTAL_FLOW_COUNT]; // TODO: Remove it since we don't use flow size?
 	unsigned int buffer_size[MEMX_TOTAL_FLOW_COUNT];
 	unsigned int usb_first_chip_pipeline_flag;
+	unsigned int usb_last_chip_pingpong_flag;
 };
 
 struct memx_reg {
@@ -184,15 +186,25 @@ struct fw_hw_info_pkt {
 };
 
 enum CMD_FEATURE_ID {
-	FID_DEVICE_FW_INFO			= 0x01,
-	FID_DEVICE_TEMPERATURE		= 0x02,
-	FID_DEVICE_INFO				= 0x03,
-	FID_DEVICE_FREQUENCY		= 0x04,
-	FID_DEVICE_VOLTAGE			= 0x05,
-	FID_DEVICE_THROUGHPUT		= 0x06,
-	FID_DEVICE_POWER			= 0x07,
-	FID_DEVICE_POWERMANAGEMENT  = 0x08,
-	FID_FW_MAX
+    FID_DEVICE_FW_INFO                  = 0x01,
+    FID_DEVICE_TEMPERATURE              = 0x02,
+    FID_DEVICE_INFO                     = 0x03,
+    FID_DEVICE_FREQUENCY                = 0x04,
+    FID_DEVICE_VOLTAGE                  = 0x05,
+    FID_DEVICE_THROUGHPUT               = 0x06,
+    FID_DEVICE_POWER                    = 0x07,
+    FID_DEVICE_POWERMANAGEMENT          = 0x08,
+    FID_DEVICE_POWER_THRESHOLD          = 0x09,
+    FID_DEVICE_POWER_ALERT              = 0x0a,
+    FID_DEVICE_POWER_ALERT_FREQUENCY    = 0x0b,
+    FID_DEVICE_INTERFACE_INFO           = 0x0c,
+    FID_DEVICE_HW_INFO		            = 0x0d,
+    FID_FW_MAX
+};
+
+enum CMD_SELFTEST_ID {
+    TESTID_PCIE_BANDWIDTH                  = 0x01,
+	TESTID_FW_MAX
 };
 
 struct transport_sq {
@@ -205,10 +217,10 @@ struct transport_sq {
 	unsigned int cdw3;
 	unsigned int cdw4;
 	unsigned int cdw5;
-	unsigned int dptr0_l;
-	unsigned int dptr0_h;
-	unsigned int dptr1_l;
-	unsigned int dptr2_h;
+	unsigned int cdw6;
+	unsigned int cdw7;
+	unsigned int cdw8;
+	unsigned int cdw9;
 	unsigned int cdw10;
 	unsigned int cdw11;
 	unsigned int cdw12;
@@ -282,29 +294,33 @@ enum memx_extend_cmd {
 #define MEMX_USB_CASCADE_OUT_DEV_FILE   "/dev/memxchipi" // USB cascade bulkout device
 
 #define MEMX_IOC_MAJOR 'u'
-#define MEMX_DRIVER_MPU_IN_SIZE	 _IOW(MEMX_IOC_MAJOR, 1, struct memx_mpu_size)
-#define MEMX_DRIVER_MPU_OUT_SIZE	_IOW(MEMX_IOC_MAJOR, 2, struct memx_mpu_size)
-#define MEMX_FW_MPU_OUT_SIZE		_IOW(MEMX_IOC_MAJOR, 3, struct memx_mpu_size)
-#define MEMX_DOWNLOAD_FIRMWARE	  _IOW(MEMX_IOC_MAJOR, 4, struct memx_firmware_bin)
-#define MEMX_DOWNLOAD_DFP		   _IOW(MEMX_IOC_MAJOR, 5, struct memx_bin)
-#define MEMX_RUNTIMEDWN_DFP		 _IOW(MEMX_IOC_MAJOR, 6, struct memx_bin)
-#define MEMX_WRITE_REG			  _IOW(MEMX_IOC_MAJOR, 7, struct memx_reg)
-#define MEMX_READ_REG			   _IOR(MEMX_IOC_MAJOR, 8, struct memx_reg)
-#define MEMX_IFMAP_FLOW			 _IOW(MEMX_IOC_MAJOR, 9, struct memx_flow)
-#define MEMX_ABORT_TRANSFER		 _IO(MEMX_IOC_MAJOR, 10)
-#define MEMX_SET_CHIP_ID			_IOW(MEMX_IOC_MAJOR, 11, struct memx_chip_id)
-#define MEMX_READ_CHIP_ID		   _IOR(MEMX_IOC_MAJOR, 12, struct memx_reg)
-#define MEMX_GET_FWUPDATE_STATUS	_IOR(MEMX_IOC_MAJOR, 13, struct memx_reg)
-#define MEMX_WAIT_FW_MSIX_ACK	   _IO(MEMX_IOC_MAJOR, 14)
-#define MEMX_GET_HW_INFO			_IOR(MEMX_IOC_MAJOR, 15, struct hw_info)
-#define MEMX_CONFIG_MPU_GROUP	   _IOWR(MEMX_IOC_MAJOR, 16, struct hw_info)
-#define MEMX_INIT_WTMEM_FMAP		_IOW(MEMX_IOC_MAJOR, 17, struct memx_chip_id)
-#define MEMX_RESET_DEVICE		   _IO(MEMX_IOC_MAJOR, 18)
-#define MEMX_GET_DEVICE_FEATURE	 _IOWR(MEMX_IOC_MAJOR, 19, struct transport_cmd)
-#define MEMX_SET_DEVICE_FEATURE	 _IOWR(MEMX_IOC_MAJOR, 20, struct transport_cmd)
-#define MEMX_SET_THROUGHPUT_INFO	_IOWR(MEMX_IOC_MAJOR, 21, struct memx_throughput_info)
-#define MEMX_VENDOR_CMD			 _IOWR(MEMX_IOC_MAJOR, 22, struct transport_cmd)
-#define MEMX_IOC_MAXNR (22)
+#define MEMX_DRIVER_MPU_IN_SIZE  _IOW(MEMX_IOC_MAJOR, 1, struct memx_mpu_size)
+#define MEMX_DRIVER_MPU_OUT_SIZE _IOW(MEMX_IOC_MAJOR, 2, struct memx_mpu_size)
+#define MEMX_FW_MPU_OUT_SIZE     _IOW(MEMX_IOC_MAJOR, 3, struct memx_mpu_size)
+#define MEMX_DOWNLOAD_FIRMWARE   _IOW(MEMX_IOC_MAJOR, 4, struct memx_firmware_bin)
+#define MEMX_DOWNLOAD_DFP        _IOW(MEMX_IOC_MAJOR, 5, struct memx_bin)
+#define MEMX_RUNTIMEDWN_DFP      _IOW(MEMX_IOC_MAJOR, 6, struct memx_bin)
+#define MEMX_WRITE_REG           _IOW(MEMX_IOC_MAJOR, 7, struct memx_reg)
+#define MEMX_READ_REG            _IOR(MEMX_IOC_MAJOR, 8, struct memx_reg)
+#define MEMX_IFMAP_FLOW          _IOW(MEMX_IOC_MAJOR, 9, struct memx_flow)
+#define MEMX_ABORT_TRANSFER      _IO(MEMX_IOC_MAJOR, 10)
+#define MEMX_SET_CHIP_ID         _IOW(MEMX_IOC_MAJOR, 11, struct memx_chip_id)
+#define MEMX_READ_CHIP_ID        _IOR(MEMX_IOC_MAJOR, 12, struct memx_reg)
+#define MEMX_GET_FWUPDATE_STATUS _IOR(MEMX_IOC_MAJOR, 13, struct memx_reg)
+#define MEMX_WAIT_FW_MSIX_ACK    _IO(MEMX_IOC_MAJOR, 14)
+#define MEMX_GET_HW_INFO         _IOR(MEMX_IOC_MAJOR, 15, struct hw_info)
+#define MEMX_CONFIG_MPU_GROUP    _IOWR(MEMX_IOC_MAJOR, 16, struct hw_info)
+#define MEMX_INIT_WTMEM_FMAP     _IOW(MEMX_IOC_MAJOR, 17, struct memx_chip_id)
+#define MEMX_RESET_DEVICE        _IO(MEMX_IOC_MAJOR, 18)
+#define MEMX_GET_DEVICE_FEATURE  _IOWR(MEMX_IOC_MAJOR, 19, struct transport_cmd)
+#define MEMX_SET_DEVICE_FEATURE  _IOWR(MEMX_IOC_MAJOR, 20, struct transport_cmd)
+#define MEMX_SET_THROUGHPUT_INFO _IOWR(MEMX_IOC_MAJOR, 21, struct memx_throughput_info)
+#define MEMX_VENDOR_CMD          _IOWR(MEMX_IOC_MAJOR, 22, struct transport_cmd)
+#define MEMX_DUMMY_READ          _IO(MEMX_IOC_MAJOR, 23)
+#define MEMX_SET_ABORT_READ      _IO(MEMX_IOC_MAJOR, 24)
+#define MEMX_ADMIN_DOWNLOAD_DFP  _IOWR(MEMX_IOC_MAJOR, 25, struct transport_cmd)
+#define MEMX_ADMIN_COMMAND  	 _IOWR(MEMX_IOC_MAJOR, 26, struct transport_cmd)
+#define MEMX_IOC_MAXNR (26)
 
 #elif _WIN32
 //#include <stdint.h>
@@ -456,6 +472,11 @@ DEFINE_GUID(GUID_CLASS_MEMX_CASCADE_MUTLI_G3_LAST_USB,
 
 #define MEMX_SET_THROUGHPUT_INFO		CTL_CODE(FILE_DEVICE_UNKNOWN,	   \
 													 MEMX_IOCTL_INDEX + 20, \
+													 METHOD_BUFFERED,	   \
+													 FILE_ANY_ACCESS)
+
+#define MEMX_ADMIN_COMMAND				CTL_CODE(FILE_DEVICE_UNKNOWN,	   \
+													 MEMX_IOCTL_INDEX + 21, \
 													 METHOD_BUFFERED,	   \
 													 FILE_ANY_ACCESS)
 

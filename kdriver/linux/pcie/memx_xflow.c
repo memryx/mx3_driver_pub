@@ -6,26 +6,26 @@
 static s32 memx_xflow_basic_check(struct memx_pcie_dev *memx_dev, u8 chip_id)
 {
 	if (!memx_dev || !memx_dev->pDev) {
-		pr_err("xflow_basic_check: No Opened Device!\n");
+		pr_err("memryx: xflow_basic_check: No Opened Device!\n");
 		return -ENODEV;
 	}
 	if ((memx_dev->xflow_conf_bar_idx == MAX_BAR) || (memx_dev->xflow_vbuf_bar_idx == MAX_BAR)) {
-		pr_err("xflow_basic_check: xflow bar idx(%u)(%u) invalid.\n", memx_dev->xflow_conf_bar_idx, memx_dev->xflow_vbuf_bar_idx);
+		pr_err("memryx: xflow_basic_check: xflow bar idx(%u)(%u) invalid\n", memx_dev->xflow_conf_bar_idx, memx_dev->xflow_vbuf_bar_idx);
 		return -ENODEV;
 	}
 	if (!memx_dev->bar_info[memx_dev->xflow_conf_bar_idx].iobase ||
 		!memx_dev->bar_info[memx_dev->xflow_conf_bar_idx].available) {
-		pr_err("xflow_basic_check: bar_idx(%u) invalid.\n", memx_dev->xflow_conf_bar_idx);
+		pr_err("memryx: xflow_basic_check: bar_idx(%u) invalid\n", memx_dev->xflow_conf_bar_idx);
 		return -ENODEV;
 	}
 	if (!memx_dev->bar_info[memx_dev->xflow_vbuf_bar_idx].iobase ||
 		!memx_dev->bar_info[memx_dev->xflow_vbuf_bar_idx].available) {
-		pr_err("xflow_basic_check: bar_idx(%u) invalid.\n", memx_dev->xflow_vbuf_bar_idx);
+		pr_err("memryx: xflow_basic_check: bar_idx(%u) invalid\n", memx_dev->xflow_vbuf_bar_idx);
 		return -ENODEV;
 	}
 	if ((chip_id >= MAX_SUPPORT_CHIP_NUM) ||
 		(memx_dev->bar_mode == MEMXBAR_3BAR_BAR0VB_BAR2CI_16MB_BAR4SRAM && chip_id >= 4)) {
-		pr_err("xflow_basic_check: chip_id(%u) invalid.\n", chip_id);
+		pr_err("memryx: xflow_basic_check: chip_id(%u) invalid\n", chip_id);
 		return -ENODEV;
 	}
 	return 0;
@@ -38,7 +38,7 @@ static void memx_xflow_set_access_mode(struct memx_pcie_dev *memx_dev, u8 chip_i
 	u8 bar_idx = memx_dev->xflow_conf_bar_idx;
 
 	if (memx_xflow_basic_check(memx_dev, chip_id)) {
-		pr_err("xflow_set_base_address: basic check fail\n");
+		pr_err("memryx: xflow_set_base_address: basic check failed\n");
 		return;
 	}
 
@@ -53,7 +53,7 @@ static void memx_xflow_set_base_address(struct memx_pcie_dev *memx_dev, u8 chip_
 	u8 bar_idx = memx_dev->xflow_conf_bar_idx;
 
 	if (memx_xflow_basic_check(memx_dev, chip_id)) {
-		pr_err("xflow_set_base_address: basic check fail\n");
+		pr_err("memryx: xflow_set_base_address: basic check failed\n");
 		return;
 	}
 
@@ -68,7 +68,7 @@ static void memx_xflow_write_virtual_buffer_address(struct memx_pcie_dev *memx_d
 	u8 bar_idx = memx_dev->xflow_vbuf_bar_idx;
 
 	if (memx_xflow_basic_check(memx_dev, chip_id)) {
-		pr_err("xflow_write_virtual_buffer: basic check fail\n");
+		pr_err("memryx: xflow_write_virtual_buffer: basic check failed\n");
 		return;
 	}
 
@@ -84,7 +84,7 @@ static u32 memx_xflow_read_virtual_buffer_address(struct memx_pcie_dev *memx_dev
 	u8 bar_idx = memx_dev->xflow_vbuf_bar_idx;
 
 	if (memx_xflow_basic_check(memx_dev, chip_id)) {
-		pr_err("xflow_read_virtual_buffer: basic check fail\n");
+		pr_err("memryx: xflow_read_virtual_buffer: basic check failed\n");
 		return 0;
 	}
 
@@ -96,7 +96,7 @@ static u32 memx_xflow_read_virtual_buffer_address(struct memx_pcie_dev *memx_dev
 void memx_xflow_write(struct memx_pcie_dev *memx_dev, u8 chip_id, u32 base_addr, u32 base_addr_offset, u32 value, bool access_mpu)
 {
 	if (memx_xflow_basic_check(memx_dev, chip_id)) {
-		pr_err("xflow_write: basic check fail\n");
+		pr_err("memryx: xflow_write: basic check failed\n");
 		return;
 	}
 
@@ -105,7 +105,7 @@ void memx_xflow_write(struct memx_pcie_dev *memx_dev, u8 chip_id, u32 base_addr,
 
 		while (memx_sram_read(memx_dev, MEMX_EXTINFO_CMD_BASE) != MEMX_EXTCMD_COMPLETE) {
 			if (time_after(jiffies, timeout)) {
-				pr_err("ERROR: %s cmd timeout\n", __func__);
+				pr_err("memryx: ERROR: %s cmd timeout\n", __func__);
 				return;
 			}
 			// speed up the hotplug
@@ -119,7 +119,7 @@ void memx_xflow_write(struct memx_pcie_dev *memx_dev, u8 chip_id, u32 base_addr,
 
 		while (memx_sram_read(memx_dev, MEMX_EXTINFO_CMD_BASE) != MEMX_EXTCMD_COMPLETE) {
 			if (time_after(jiffies, timeout)) {
-				pr_err("ERROR: %s wait cmd complete timeout\n", __func__);
+				pr_err("memryx: ERROR: %s wait cmd complete timeout\n", __func__);
 				return;
 			}
 			// speed up the hotplug
@@ -140,7 +140,7 @@ u32 memx_xflow_read(struct memx_pcie_dev *memx_dev, u8 chip_id, u32 base_addr, u
 	u32 result = 0;
 
 	if (memx_xflow_basic_check(memx_dev, chip_id)) {
-		pr_err("xflow_read: get memx_dev->mutex fail\n");
+		pr_err("memryx: xflow_read: get memx_dev->mutex failed\n");
 		return 0;
 	}
 
@@ -149,7 +149,7 @@ u32 memx_xflow_read(struct memx_pcie_dev *memx_dev, u8 chip_id, u32 base_addr, u
 
 		while (memx_sram_read(memx_dev, MEMX_EXTINFO_CMD_BASE) != MEMX_EXTCMD_COMPLETE) {
 			if (time_after(jiffies, timeout)) {
-				pr_err("ERROR: %s cmd timeout 1\n", __func__);
+				pr_err("memryx: ERROR: %s cmd timeout 1\n", __func__);
 				return 0;
 			}
 		}
@@ -160,7 +160,7 @@ u32 memx_xflow_read(struct memx_pcie_dev *memx_dev, u8 chip_id, u32 base_addr, u
 		timeout = jiffies + (HZ);
 		while (memx_sram_read(memx_dev, MEMX_EXTINFO_CMD_BASE) != MEMX_EXTCMD_COMPLETE) {
 			if (time_after(jiffies, timeout)) {
-				pr_err("ERROR: %s cmd timeout 2\n", __func__);
+				pr_err("memryx: ERROR: %s cmd timeout 2\n", __func__);
 				return 0;
 			}
 		}
@@ -180,7 +180,7 @@ void memx_xflow_trigger_mpu_sw_irq(struct memx_pcie_dev *memx_dev, u8 chip_id, e
 	u32 write_value = 0;
 
 	if (memx_xflow_basic_check(memx_dev, chip_id)) {
-		pr_err("xflow_trigger_mpu_sw_irq: basic check fail.\n");
+		pr_err("memryx: xflow_trigger_mpu_sw_irq: basic check failed\n");
 		return;
 	}
 
@@ -201,7 +201,7 @@ void memx_xflow_trigger_mpu_sw_irq(struct memx_pcie_dev *memx_dev, u8 chip_id, e
 		write_value = (0x1 << reset_mpu_idx_7);
 	break;
 	default:
-		pr_err("Invalid sw_irq_idx(%u), it should not be used.\n", sw_irq_idx);
+		pr_err("memryx: Invalid sw_irq_idx(%u), it should not be used\n", sw_irq_idx);
 		return;
 	}
 	memx_xflow_write(memx_dev, chip_id, AHB_HUB_IRQ_EN_BASE, 0x0, write_value, true);
@@ -212,11 +212,11 @@ void memx_sram_write(struct memx_pcie_dev *memx_dev, u32 base_addr, u32 value)
 	u8 bar_idx = memx_dev->sram_bar_idx;
 
 	if (bar_idx == MAX_BAR) {
-		pr_err("%s: Invalid bar_idx!\n", __func__);
+		pr_err("memryx: %s: Invalid bar_idx!\n", __func__);
 		return;
 	}
 	if ((base_addr < (MEMX_CHIP_SRAM_BASE + MEMX_CHIP_SRAM_DATA_SRAM_OFFS)) || (base_addr >= (MEMX_CHIP_SRAM_BASE + MEMX_CHIP_SRAM_MAX_SIZE))) {
-		pr_err("%s: Invalid base_addr!\n", __func__);
+		pr_err("memryx: %s: Invalid base_addr!\n", __func__);
 		return;
 	}
 	base_addr = base_addr - MEMX_CHIP_SRAM_BASE;
@@ -229,11 +229,11 @@ u32 memx_sram_read(struct memx_pcie_dev *memx_dev, u32 base_addr)
 	u8 bar_idx = memx_dev->sram_bar_idx;
 
 	if (bar_idx == MAX_BAR) {
-		pr_err("%s: Invalid bar_idx!\n", __func__);
+		pr_err("memryx: %s: Invalid bar_idx!\n", __func__);
 		return 0;
 	}
 	if ((base_addr < (MEMX_CHIP_SRAM_BASE + MEMX_CHIP_SRAM_DATA_SRAM_OFFS)) || (base_addr >= (MEMX_CHIP_SRAM_BASE + MEMX_CHIP_SRAM_MAX_SIZE))) {
-		pr_err("%s: Invalid base_addr!\n", __func__);
+		pr_err("memryx: %s: Invalid base_addr!\n", __func__);
 		return 0;
 	}
 	base_addr = base_addr - MEMX_CHIP_SRAM_BASE;

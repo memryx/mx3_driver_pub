@@ -18,21 +18,21 @@
 #define MEMX_GET_CHIP_ADMIN_CMD_BASE_VIRTUAL_ADDR(memx_dev, chip_id) (((memx_dev)->mpu_data.rx_dma_coherent_buffer_virtual_base) + \
 																		MEMX_ADMCMD_VIRTUAL_OFFSET + ((chip_id) * MEMX_ADMCMD_SIZE))
 
-static void memx_feature_trigger(struct memx_pcie_dev *memx_dev, uint8_t chip_id, struct transport_cmd *pCmd)
+static void memx_admin_trigger(struct memx_pcie_dev *memx_dev, uint8_t chip_id, struct transport_cmd *pCmd)
 {
 	uint32_t *cmd =  (uint32_t *) (MEMX_GET_CHIP_ADMIN_CMD_BASE_VIRTUAL_ADDR(memx_dev, chip_id));
-	memcpy((void *)cmd, pCmd, sizeof(struct transport_sq));
+	memcpy((void *)cmd, pCmd, sizeof(struct transport_cmd));
 	cmd[U32_ADMCMD_STATUS_OFFSET] = STATUS_RECEIVE;
 	dma_sync_single_for_device(&memx_dev->pDev->dev, (dma_addr_t)(memx_dev->mpu_data.hw_info.fw.rx_dma_coherent_buffer_base + MEMX_ADMCMD_VIRTUAL_PAGE_OFFSET), MEMX_ADMCMD_VIRTUAL_PAGE_SIZE, DMA_BIDIRECTIONAL);
 }
 
-static void memx_feature_data_from_device(struct memx_pcie_dev *memx_dev, uint8_t chip_id, struct transport_cmd *cmd)
+static void memx_admin_data_from_device(struct memx_pcie_dev *memx_dev, uint8_t chip_id, struct transport_cmd *cmd)
 {
 	uint32_t index = 0;
 	uint8_t read_data_start = 0;
 	uint8_t read_data_end = 0;
 
-	if (cmd->SQ.subOpCode == FID_DEVICE_THROUGHPUT) {
+	if (cmd->SQ.subOpCode == FID_DEVICE_THROUGHPUT && cmd->SQ.opCode == MEMX_ADMIN_CMD_GET_FEATURE) {
 		read_data_start = (chip_id == CHIP_ID0) ? THROUGHPUT_DATA_BEGIN_CHIP_0 : THROUGHPUT_DATA_BEGIN_CHIP_LAST;
 		read_data_end   = (chip_id == CHIP_ID0) ? THROUGHPUT_DATA_BEGIN_CHIP_LAST : THROUGHPUT_DATA_END_CHIP_LAST;
 	} else {
@@ -47,7 +47,7 @@ static void memx_feature_data_from_device(struct memx_pcie_dev *memx_dev, uint8_
 	}
 }
 
-static enum CASCADE_PLUS_ADMINCMD_ERROR_STATUS memx_feature_fetch_result(struct memx_pcie_dev *memx_dev, uint8_t chip_id, struct transport_cmd *cmd)
+static enum CASCADE_PLUS_ADMINCMD_ERROR_STATUS memx_admin_fetch_result(struct memx_pcie_dev *memx_dev, uint8_t chip_id, struct transport_cmd *cmd)
 {
 	enum CASCADE_PLUS_ADMINCMD_STATUS device_status = STATUS_IDLE;
 	enum CASCADE_PLUS_ADMINCMD_ERROR_STATUS error_status = ERROR_STATUS_NO_ERROR;
@@ -66,13 +66,13 @@ static enum CASCADE_PLUS_ADMINCMD_ERROR_STATUS memx_feature_fetch_result(struct 
 			error_status = AdminCmd[U32_ADMCMD_CQ_STATUS_OFFSET];
 
 			if (error_status != ERROR_STATUS_NO_ERROR)
-				pr_err("memryx: Admin error subOpCode %d\n", subOpCode);
+				pr_err("memryx: admin error subOpCode %d\n", subOpCode);
 			else
-				memx_feature_data_from_device(memx_dev, chip_id, cmd);
+				memx_admin_data_from_device(memx_dev, chip_id, cmd);
 
 		} else if (time_after(jiffies, timeout)) {
 			error_status = ERROR_STATUS_TIMEOUT_FAIL;
-			pr_err("memryx: Admin timeout device status %d subop %d chip %d\n", device_status, subOpCode, chip_id);
+			pr_err("memryx: admin timeout device status %d subop %d chip %d\n", device_status, subOpCode, chip_id);
 			break;
 		}
 	} while (device_status != STATUS_COMPLETE);
@@ -83,15 +83,184 @@ static enum CASCADE_PLUS_ADMINCMD_ERROR_STATUS memx_feature_fetch_result(struct 
 	return error_status;
 }
 
-static long memx_feature_ioctl(struct file *filp, u32 cmd, unsigned long arg)
+static long _admin_get_feature(struct memx_pcie_dev *memx_dev, struct transport_cmd *pCmd){
+	long 	ret 	= 0;
+
+	if (pCmd->SQ.subOpCode == FID_DEVICE_THROUGHPUT) {
+		pCmd->CQ.data[0]  = tx_time_us;
+		pCmd->CQ.data[1]  = tx_size / KBYTE;
+		pCmd->CQ.data[2] = rx_time_us;
+		pCmd->CQ.data[3] = rx_size / KBYTE;
+		pCmd->CQ.data[4] = udrv_throughput_info.stream_write_us;
+		pCmd->CQ.data[5] = udrv_throughput_info.stream_write_kb;
+		pCmd->CQ.data[6] = udrv_throughput_info.stream_read_us;
+		pCmd->CQ.data[7] = udrv_throughput_info.stream_read_kb;
+		tx_time_us = 0;
+		tx_size = 0;
+		rx_time_us = 0;
+		rx_size = 0;
+		udrv_throughput_info.stream_write_us = 0;
+		udrv_throughput_info.stream_write_kb = 0;
+		udrv_throughput_info.stream_read_us = 0;
+		udrv_throughput_info.stream_read_kb = 0;
+	} else if(pCmd->SQ.subOpCode == FID_DEVICE_INTERFACE_INFO) {
+		int offset = pci_find_capability(memx_dev->pDev, PCI_CAP_ID_EXP);
+		if (offset == 0) {
+			pr_err("memryx: failed to find capability\n");
+			ret = -ENODEV;
+		} else {
+			pci_read_config_dword(memx_dev->pDev, offset + PCI_EXP_LNKCAP, &pCmd->CQ.data[0]);
+			pci_read_config_word(memx_dev->pDev, offset + PCI_EXP_LNKSTA, (u16*)&pCmd->CQ.data[1]);
+		}
+	} else if ((pCmd->SQ.subOpCode == FID_DEVICE_POWERMANAGEMENT) || (pCmd->SQ.subOpCode == FID_DEVICE_FREQUENCY)) {
+		uint8_t chip_id = pCmd->SQ.cdw2;
+
+		if ((chip_id < MAX_CHIP_NUM) && (memx_dev->mpu_data.hw_info.chip.roles[chip_id] != ROLE_UNCONFIGURED)) {
+			memx_admin_trigger(memx_dev, chip_id, pCmd);
+			pCmd->CQ.status = memx_admin_fetch_result(memx_dev, chip_id, pCmd);
+		} else {
+			pCmd->CQ.status = ERROR_STATUS_PARAMETER_FAIL;
+		}
+	} else if(pCmd->SQ.subOpCode == FID_DEVICE_HW_INFO) {
+		pCmd->CQ.data[0] = memx_dev->mpu_data.hw_info.chip.generation;
+		pCmd->CQ.data[1] = memx_dev->mpu_data.hw_info.chip.total_chip_cnt;
+		pCmd->CQ.data[2] = memx_dev->mpu_data.hw_info.chip.curr_config_chip_count;
+		pCmd->CQ.data[3] = memx_dev->mpu_data.hw_info.chip.group_count;
+	} else {
+		memx_admin_trigger(memx_dev, CHIP_ID0, pCmd);
+		pCmd->CQ.status = memx_admin_fetch_result(memx_dev, CHIP_ID0, pCmd);
+	}
+
+	if (pCmd->SQ.subOpCode == FID_DEVICE_INFO) {
+		char version[8] = PCIE_VERSION;
+
+		memcpy(&pCmd->CQ.data[7], version, sizeof(unsigned int));
+		memcpy(&pCmd->CQ.data[8], &version[sizeof(unsigned int)], sizeof(unsigned int));
+	}
+
+	return ret;
+}
+
+static long _admin_set_feature(struct memx_pcie_dev *memx_dev, struct transport_cmd *pCmd){
+    long    ret     = 0;
+    uint8_t chip_id = pCmd->SQ.cdw2;
+
+    if (chip_id < memx_dev->mpu_data.hw_info.chip.total_chip_cnt) {
+        memx_admin_trigger(memx_dev, chip_id, pCmd);
+        pCmd->CQ.status = memx_admin_fetch_result(memx_dev, chip_id, pCmd);
+    } else {
+        pCmd->CQ.status = ERROR_STATUS_PARAMETER_FAIL;
+    }
+
+	return ret;
+}
+//not finished
+static long _admin_download_dfp(struct memx_pcie_dev *memx_dev, struct transport_cmd *pCmd){
+	long                    ret 	                = 0;
+	const uint8_t           start_index             = 4;
+	const uint8_t           max_parallel_chip_count = 4;
+
+	struct transport_cmd    cmd_k[4];
+	uint8_t                 index                   = 0;
+	uint32_t                des_type                = 0;
+
+	memset(&cmd_k, 0, sizeof(struct transport_cmd) * max_parallel_chip_count);
+
+	//sync dfp data area
+	dma_sync_single_for_device(&memx_dev->pDev->dev, (dma_addr_t)memx_dev->mpu_data.hw_info.fw.rx_dma_coherent_buffer_base, DMA_COHERENT_BUFFER_SIZE_1MB, DMA_BIDIRECTIONAL);
+
+	//prepare SQ
+	for(index = 0; index < max_parallel_chip_count; index++){
+		if(pCmd->sq_data[start_index + 3 * index]){
+			cmd_k[index].SQ.opCode = pCmd->SQ.opCode;
+			cmd_k[index].SQ.cmdLen = pCmd->SQ.cmdLen;
+			cmd_k[index].SQ.subOpCode = pCmd->SQ.subOpCode;
+			cmd_k[index].SQ.reqLen = pCmd->SQ.reqLen;
+			cmd_k[index].SQ.attr = ((pCmd->sq_data[start_index + 3 * index] & 0xFF000000) >> 24);
+			cmd_k[index].SQ.cdw2 =  (pCmd->sq_data[start_index + 3 * index] & 0x000000FF);
+
+			des_type = ((pCmd->sq_data[start_index + 3 * index] & 0x0000FF00) >> 8);
+			cmd_k[index].SQ.cdw3 = (des_type != 0x38) ? (des_type << 24) : ((des_type << 24)|0x800000);
+			cmd_k[index].SQ.cdw4 =  pCmd->sq_data[start_index + 3 * index + 1];
+			cmd_k[index].SQ.cdw5 =  pCmd->sq_data[start_index + 3 * index + 2];
+			cmd_k[index].SQ.cdw6 = ((pCmd->sq_data[start_index + 3 * index] & 0x00FF0000) >> 16);
+		}
+	}
+
+	//trigger admin command
+	for(index = 0; index < max_parallel_chip_count; index++){
+		if(cmd_k[index].SQ.opCode){
+			memx_admin_trigger(memx_dev, cmd_k[index].SQ.cdw2, &cmd_k[index]);
+		}
+	}
+
+	//polling admin command done, require all command done
+	for(index = 0; index < max_parallel_chip_count; index++){
+		if(cmd_k[index].SQ.opCode && (cmd_k[index].SQ.cdw2 < memx_dev->mpu_data.hw_info.chip.total_chip_cnt)){
+			cmd_k[index].CQ.status = memx_admin_fetch_result(memx_dev, cmd_k[index].SQ.cdw2, &cmd_k[index]);
+			if(cmd_k[index].CQ.status != ERROR_STATUS_NO_ERROR){
+				pCmd->CQ.status = cmd_k[index].CQ.status;
+				break;
+			}
+		}
+	}
+
+	return ret;
+}
+
+static long _admin_selftest(struct memx_pcie_dev *memx_dev, struct transport_cmd *pCmd){
+    long    ret     = 0;
+    uint8_t chip_id = pCmd->SQ.cdw2;
+
+    if (chip_id < memx_dev->mpu_data.hw_info.chip.total_chip_cnt) {
+        memx_admin_trigger(memx_dev, chip_id, pCmd);
+        pCmd->CQ.status = memx_admin_fetch_result(memx_dev, chip_id, pCmd);
+    } else {
+        pCmd->CQ.status = ERROR_STATUS_PARAMETER_FAIL;
+    }
+
+	return ret;
+}
+
+static long _admin_command(struct memx_pcie_dev *memx_dev, struct transport_cmd *pCmd){
+	long ret = 0;
+
+	mutex_lock(&memx_dev->adminlock);
+
+	switch (pCmd->SQ.opCode) {
+		case MEMX_ADMIN_CMD_SET_FEATURE:
+			ret = _admin_set_feature(memx_dev, pCmd);
+			break;
+		case MEMX_ADMIN_CMD_GET_FEATURE:
+			ret = _admin_get_feature(memx_dev, pCmd);
+			break;
+		case MEMX_ADMIN_CMD_DOWNLOAD_DFP:
+			ret = _admin_download_dfp(memx_dev, pCmd);
+			break;
+		case MEMX_ADMIN_CMD_SELFTEST:
+			ret = _admin_selftest(memx_dev, pCmd);
+			break;
+		default:
+			ret = -EFAULT;
+			pr_err("memryx: _admin_command: unsupported admin cmd(%u)\n", pCmd->SQ.opCode);
+			break;
+	}
+
+	mutex_unlock(&memx_dev->adminlock);
+
+	return ret;
+}
+
+static long memx_admin_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 {
 	long ret = 0;
 	struct memx_pcie_dev *memx_dev = NULL;
+	struct transport_cmd sCmd = {0};
 	u32 major = 0;
 	u32 minor = 0;
 
 	if (!filp) {
-		pr_err("memryx: feature_ioctl: Invalid parameters\n");
+		pr_err("memryx: feature_ioctl: invalid parameters\n");
 		return -ENODEV;
 	}
 	major = imajor(filp->f_inode);
@@ -114,108 +283,39 @@ static long memx_feature_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 		return -ENODEV;
 	}
 
+	if (copy_from_user(&sCmd, (struct transport_cmd *)arg, sizeof(struct transport_cmd))) {
+		pr_err("memryx: feature_ioctl copy_from_user failed\n");
+		ret = -ENOMEM;
+		goto done;
+	}
+
 	switch (cmd) {
-	case MEMX_GET_DEVICE_FEATURE: {
-		struct transport_cmd cmd = {0};
-		uint32_t subOpCode = 0;
-
-		if (copy_from_user(&cmd, (struct transport_cmd *)arg, sizeof(struct transport_cmd))) {
-			pr_err("memryx: MEMX_GET_DEVICE_FEATURE, copy_from_user failed\n");
-			ret = -ENOMEM;
-			goto done;
-		}
-
-		subOpCode = cmd.SQ.subOpCode;
-
-		if (subOpCode == FID_DEVICE_FW_INFO) {
-			cmd.CQ.data[0] = memx_sram_read(memx_dev, MXCNST_CQDATA0_ADDR);
-			cmd.CQ.data[1] = memx_sram_read(memx_dev, MXCNST_COMMITID);
-			cmd.CQ.data[2] = memx_sram_read(memx_dev, MXCNST_DATECODE);
-			cmd.CQ.data[3] = memx_xflow_read(memx_dev, 0, MXCNST_BOOT_MODE, 0, false);
-			cmd.CQ.data[4] = memx_xflow_read(memx_dev, 0, MXCNST_CHIP_VERSION, 0, false);
-			cmd.CQ.status  = ERROR_STATUS_NO_ERROR;
-		} else if (subOpCode == FID_DEVICE_THROUGHPUT) {
-			cmd.CQ.data[0]  = tx_time_us;
-			cmd.CQ.data[1]  = tx_size / KBYTE;
-			cmd.CQ.data[2] = rx_time_us;
-			cmd.CQ.data[3] = rx_size / KBYTE;
-			cmd.CQ.data[4] = udrv_throughput_info.stream_write_us;
-			cmd.CQ.data[5] = udrv_throughput_info.stream_write_kb;
-			cmd.CQ.data[6] = udrv_throughput_info.stream_read_us;
-			cmd.CQ.data[7] = udrv_throughput_info.stream_read_kb;
-			tx_time_us = 0;
-			tx_size = 0;
-			rx_time_us = 0;
-			rx_size = 0;
-			udrv_throughput_info.stream_write_us = 0;
-			udrv_throughput_info.stream_write_kb = 0;
-			udrv_throughput_info.stream_read_us = 0;
-			udrv_throughput_info.stream_read_kb = 0;
-		} else if ((subOpCode == FID_DEVICE_POWERMANAGEMENT) || (subOpCode == FID_DEVICE_FREQUENCY)) {
-			uint8_t chip_id = cmd.SQ.cdw2;
-
-			if ((chip_id < MAX_CHIP_NUM) && (memx_dev->mpu_data.hw_info.chip.roles[chip_id] != ROLE_UNCONFIGURED)) {
-				memx_feature_trigger(memx_dev, chip_id, &cmd);
-				cmd.CQ.status = memx_feature_fetch_result(memx_dev, chip_id, &cmd);
-			} else {
-				cmd.CQ.status = ERROR_STATUS_PARAMETER_FAIL;
-			}
-		} else {
-			memx_feature_trigger(memx_dev, CHIP_ID0, &cmd);
-			cmd.CQ.status = memx_feature_fetch_result(memx_dev, CHIP_ID0, &cmd);
-		}
-
-		if (subOpCode == FID_DEVICE_INFO) {
-			char version[8] = PCIE_VERSION;
-
-			memcpy(&cmd.CQ.data[7], version, sizeof(unsigned int));
-			memcpy(&cmd.CQ.data[8], &version[sizeof(unsigned int)], sizeof(unsigned int));
-		}
-
-		if (copy_to_user((void __user *)arg, &cmd, sizeof(struct transport_cmd))) {
-			pr_err("memryx: feature_ioctl: MEMX_GET_DEVICE_FEATURE, copy_to_user failed\n");
-			ret = -ENOMEM;
-			goto done;
-		}
+		case MEMX_GET_DEVICE_FEATURE: //backward
+		case MEMX_SET_DEVICE_FEATURE: //backward
+		case MEMX_ADMIN_DOWNLOAD_DFP: //backward
+		case MEMX_ADMIN_COMMAND:
+			ret = _admin_command(memx_dev, &sCmd);
+			break;
+		default:
+			ret = -EFAULT;
+			pr_err("memryx: feature_ioctl: (%u-%u): unsupported ioctl cmd(%u)\n", major, minor, cmd);
+			break;
 	}
-	break;
-	case MEMX_SET_DEVICE_FEATURE: {
-		struct transport_cmd cmd = {0};
-		uint8_t chip_id = 0;
 
-		if (copy_from_user(&cmd, (struct transport_cmd *)arg, sizeof(struct transport_cmd))) {
-			pr_err("memryx: MEMX_GET_DEVICE_FEATURE, copy_from_user failed\n");
-			ret = -ENOMEM;
-			goto done;
-		}
-
-		chip_id = cmd.SQ.cdw2;
-		if (chip_id < memx_dev->mpu_data.hw_info.chip.total_chip_cnt) {
-			memx_feature_trigger(memx_dev, chip_id, &cmd);
-			cmd.CQ.status = memx_feature_fetch_result(memx_dev, chip_id, &cmd);
-		} else {
-			cmd.CQ.status = ERROR_STATUS_PARAMETER_FAIL;
-		}
-
-		if (copy_to_user((void __user *)arg, &cmd, sizeof(struct transport_cmd))) {
-			pr_err("memryx: feature_ioctl: MEMX_SET_DEVICE_FEATURE, copy_to_user failed\n");
-			ret = -ENOMEM;
-			goto done;
-		}
+	if (copy_to_user((void __user *)arg, &sCmd, sizeof(struct transport_cmd))) {
+		pr_err("memryx: feature_ioctl: copy_to_user failed\n");
+		ret = -ENOMEM;
+		goto done;
 	}
-	break;
-	default:
-		ret = -EFAULT;
-		pr_err("memryx: feature_ioctl: (%u-%u): unsupported ioctl cmd(%u)\n", major, minor, cmd);
-	}
+
 done:
 #ifdef DEBUG
-	pr_info(" feature_ioctl: (%u-%u): finish\n", major, minor);
+	pr_info("memryx: feature_ioctl: (%u-%u): finished\n", major, minor);
 #endif
 	return ret;
 }
 
-static s32 memx_feature_open(struct inode *inode, struct file *filp)
+static s32 memx_admin_open(struct inode *inode, struct file *filp)
 {
 	u32 minor = iminor(filp->f_inode);
 #ifdef DEBUG
@@ -225,7 +325,7 @@ static s32 memx_feature_open(struct inode *inode, struct file *filp)
 	struct memx_pcie_dev *memx_dev = memx_get_device_by_index(minor);
 
 	if (!memx_dev) {
-		pr_err("memryx: feature_open: PCIe device not found for /dev/memx%d node.\n", minor);
+		pr_err("memryx: feature_open: PCIe device not found for /dev/memx%d node\n", minor);
 		return -ENODEV;
 	}
 	filp->private_data = memx_dev;
@@ -237,7 +337,7 @@ static s32 memx_feature_open(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-static s32 memx_feature_release(struct inode *inode, struct file *filp)
+static s32 memx_admin_release(struct inode *inode, struct file *filp)
 {
 #ifdef DEBUG
 	u32 major = imajor(filp->f_inode);
@@ -245,14 +345,14 @@ static s32 memx_feature_release(struct inode *inode, struct file *filp)
 #endif
 
 #ifdef DEBUG
-	pr_info("memryx: feature_close: (%d-%d) success.\n", major, minor);
+	pr_info("memryx: feature_close: (%d-%d) success\n", major, minor);
 #endif
 	return 0;
 }
 
 struct file_operations memx_feature_fops = {
 owner: THIS_MODULE,
-unlocked_ioctl : memx_feature_ioctl,
-open : memx_feature_open,
-release : memx_feature_release,
+unlocked_ioctl : memx_admin_ioctl,
+open : memx_admin_open,
+release : memx_admin_release,
 };

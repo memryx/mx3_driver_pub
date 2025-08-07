@@ -19,6 +19,7 @@ static u32 fs_debug_en;
 static u32 pcie_lane_no = 2;
 static u32 pcie_lane_speed = 3;
 static u32 pcie_aspm;
+u32 mxmf_boot_tick = 30;
 
 ktime_t tx_start_time = 0, tx_end_time = 0;
 ktime_t rx_start_time = 0, rx_end_time = 0;
@@ -37,6 +38,9 @@ module_param(pcie_lane_speed, uint, 0);
 MODULE_PARM_DESC(pcie_lane_speed, "Internal chip2chip pcie link speed. ValidRange: 1/2/3. 3 is default means GEN3");
 module_param(pcie_aspm, uint, 0);
 MODULE_PARM_DESC(pcie_aspm, "Internal chip2chip pcie link aspm control:: 0-FW_default(default) 1-L0_only 2-L0sL1 3-L0sL1.1");
+module_param(mxmf_boot_tick, uint, 0);
+MODULE_PARM_DESC(mxmf_boot_tick, "MXMF wait boot tick:: Around 30 ticks equals 1 second(default: 30)");
+
 
 #define THROUGHPUT_ADD(current_size, additional_size) \
 	do { \
@@ -101,17 +105,19 @@ static s32 memx_pcie_abort_transfer(struct memx_pcie_dev *memx_dev)
 	u8 chip_id = 0;
 
 	if (!memx_dev || !memx_dev->pDev) {
-		pr_err("memryx: pcie_abort_transfer: failed by -ENODEV\n");
+		pr_err("memryx: pcie_abort_transfer: failed with -ENODEV\n");
 		return -ENODEV;
 	}
 	memx_dev->mpu_data.rx_ctrl.is_abort = 1;
 	memx_dev->mpu_data.rx_ctrl.indicator = -1;
 
-	spin_lock(&memx_dev->mpu_data.rx_ctrl.lock);
-	while (!kfifo_is_empty(&memx_dev->rx_msix_fifo))
-		kfifo_skip(&memx_dev->rx_msix_fifo);
+	if (!memx_dev->mpu_data.rx_ctrl.is_read_abort) {
+		spin_lock(&memx_dev->mpu_data.rx_ctrl.lock);
+		while (!kfifo_is_empty(&memx_dev->rx_msix_fifo))
+			kfifo_skip(&memx_dev->rx_msix_fifo);
 
-	spin_unlock(&memx_dev->mpu_data.rx_ctrl.lock);
+		spin_unlock(&memx_dev->mpu_data.rx_ctrl.lock);
+	}
 
 	for (chip_id = 0; chip_id < MAX_SUPPORT_CHIP_NUM; chip_id++) {
 		memx_dev->mpu_data.tx_ctrl[chip_id].is_abort = 1;
@@ -123,9 +129,43 @@ static s32 memx_pcie_abort_transfer(struct memx_pcie_dev *memx_dev)
 	wake_up_interruptible(&memx_dev->mpu_data.rx_ctrl.wq);
 	wake_up_interruptible(&memx_dev->mpu_data.fw_ctrl.wq);
 #ifdef DEBUG
-	pr_info("pcie_abort_transfer success\n");
+	pr_info("memryx: pcie_abort_transfer success\n");
 #endif
 	return 0;
+}
+
+static ssize_t memx_pcie_dummy_read(struct memx_pcie_dev *memx_dev)
+{
+	s32 indicator = -ERESTARTSYS;
+	s32 wq_status = 0;
+
+	if (!memx_dev || !memx_dev->pDev) {
+		pr_info("memryx: memx_pcie_dummy_read: warning -ENODEV\n");
+	}
+
+	// Read data from device until there is empty.
+	if (!kfifo_out_locked(&memx_dev->rx_msix_fifo, &indicator, sizeof(s32), &memx_dev->mpu_data.rx_ctrl.lock)) {
+		wq_status = wait_event_interruptible_timeout(memx_dev->mpu_data.rx_ctrl.wq, (kfifo_len(&memx_dev->rx_msix_fifo) != 0), msecs_to_jiffies(100));
+
+		if (wq_status == -ERESTARTSYS) {
+			pr_warn("memryx: fops_read: cancelled by interrupt signal\n");
+		}
+
+		if (wq_status >= 1) {
+			if (!kfifo_out_locked(&memx_dev->rx_msix_fifo, &indicator, sizeof(s32), &memx_dev->mpu_data.rx_ctrl.lock)) {
+				pr_err("memryx: fops_read: kfifo_out is empty!\n");
+				indicator = -EFAULT;
+				return indicator;
+			}
+		}
+	}
+
+	return indicator;
+}
+
+static void memx_pcie_set_abort_read(struct memx_pcie_dev *memx_dev)
+{
+	memx_dev->mpu_data.rx_ctrl.is_read_abort = 1;
 }
 
 static s32 memx_pcie_config_mpu_group(struct memx_pcie_dev *memx_dev, struct hw_info *hw_info)
@@ -134,7 +174,7 @@ static s32 memx_pcie_config_mpu_group(struct memx_pcie_dev *memx_dev, struct hw_
 	s32 ret = 0;
 
 #ifdef DEBUG
-	pr_info("into %s\n", __func__);
+	pr_info("memryx: into %s\n", __func__);
 #endif
 	for (chip_id = 0; chip_id < MAX_SUPPORT_CHIP_NUM; chip_id++)
 		memx_dev->mpu_data.hw_info.chip.roles[chip_id] = hw_info->chip.roles[chip_id];
@@ -153,13 +193,13 @@ static long memx_fops_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 	u32 minor = 0;
 
 	if (!filp) {
-		pr_err("memryx: fops_ioctl: Invild parameters\n");
+		pr_err("memryx: fops_ioctl: invalid parameters\n");
 		return -ENODEV;
 	}
 	major = imajor(filp->f_inode);
 	minor = iminor(filp->f_inode);
 #ifdef DEBUG
-	pr_info("fops_ioctl: device(major(%d)-minor(%d)), cmd:0x%x\n", major, minor, _IOC_NR(cmd));
+	pr_info("memryx: fops_ioctl: device(major(%d)-minor(%d)), cmd:0x%x\n", major, minor, _IOC_NR(cmd));
 #endif
 	if (_IOC_TYPE(cmd) != MEMX_IOC_MAJOR) {
 		pr_err("memryx: fops_ioctl: _IOC_TYPE(cmd) != MEMX_IOC_MAGIC\n");
@@ -172,11 +212,11 @@ static long memx_fops_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 
 	memx_dev = (struct memx_pcie_dev *)filp->private_data;
 	if (!memx_dev || !memx_dev->pDev) {
-		pr_err("memryx: fops_ioctl: No Opened Device!\n");
+		pr_err("memryx: fops_ioctl: no opened device!\n");
 		return -ENODEV;
 	}
 	if (down_interruptible(&memx_dev->mutex)) {
-		pr_err("memryx: fops_ioctl: get memx_dev->mutex failed!\n");
+		pr_err("memryx: fops_ioctl: get memx_dev->mutex failed\n");
 		return -ERESTARTSYS;
 	}
 
@@ -186,19 +226,19 @@ static long memx_fops_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 			struct pcie_fw_cmd_format *firmware_command_result_buffer = NULL;
 
 			if (copy_from_user(&memx_fw_bin, (void __user *)arg, sizeof(struct memx_firmware_bin))) {
-				pr_err("memryx: fops_ioctl: MEMX_DOWNLOAD_FIRMWARE copy_from_user failed!\n");
+				pr_err("memryx: fops_ioctl: MEMX_DOWNLOAD_FIRMWARE copy_from_user failed\n");
 				ret = -EFAULT;
 				goto done;
 			}
 
 			if (!memx_fw_bin.buffer) {
-				pr_err("memryx: fops_ioctl: MEMX_DOWNLOAD_FIRMWARE NULL Buffer!!\n");
+				pr_err("memryx: fops_ioctl: MEMX_DOWNLOAD_FIRMWARE got NULL buffer\n");
 				ret = -EFAULT;
 				goto done;
 			}
 
 			if (copy_from_user((void *)(memx_dev->mpu_data.rx_dma_coherent_buffer_virtual_base + IFMAP_INGRESS_DCORE_DMA_COHERENT_BUFFER_SIZE_512KB), memx_fw_bin.buffer, memx_fw_bin.size)) {
-				pr_err("memryx: fops_ioctl: MEMX_DOWNLOAD_FIRMWARE, copy_from_user failed!\n");
+				pr_err("memryx: fops_ioctl: MEMX_DOWNLOAD_FIRMWARE copy_from_user failed\n");
 				ret = -EFAULT;
 				goto done;
 			}
@@ -207,7 +247,7 @@ static long memx_fops_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 			firmware_command_result_buffer = memx_send_cmd_to_fw_and_get_result(memx_dev, PCIE_CMD_VENDOR_1, sizeof(struct transport_cmd), CHIP_ID0);
 
 			if ((!firmware_command_result_buffer) || (firmware_command_result_buffer->data[0])) {
-				pr_err("memryx: fops_ioctl: MEMX_DOWNLOAD_FIRMWARE failed!\n");
+				pr_err("memryx: fops_ioctl: MEMX_DOWNLOAD_FIRMWARE failed\n");
 				ret = -EFAULT;
 				goto done;
 			}
@@ -218,7 +258,7 @@ static long memx_fops_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 
 		memmove(&hw_info, &memx_dev->mpu_data.hw_info, sizeof(struct hw_info));
 		if (copy_to_user((void __user *)arg, &hw_info, sizeof(struct hw_info))) {
-			pr_err("memryx: fops_ioctl: MEMX_GET_HW_INFO Copy to user failed!\n");
+			pr_err("memryx: fops_ioctl: MEMX_GET_HW_INFO copy to userspace failed\n");
 			ret = -EFAULT;
 			goto done;
 		}
@@ -231,28 +271,36 @@ static long memx_fops_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 	break;
 	case MEMX_ABORT_TRANSFER: {
 		if (memx_pcie_abort_transfer(memx_dev)) {
-			pr_err("memryx: PCIe abort transfer failed!\n");
+			pr_err("memryx: PCIe abort transfer failed\n");
 			ret = -EIO;
 			goto done;
 		}
+	}
+	break;
+	case MEMX_DUMMY_READ: {
+		ret = memx_pcie_dummy_read(memx_dev);
+	}
+	break;
+	case MEMX_SET_ABORT_READ: {
+		memx_pcie_set_abort_read(memx_dev);
 	}
 	break;
 	case MEMX_CONFIG_MPU_GROUP: {
 		struct hw_info hw_info = {0};
 
 		if (copy_from_user(&hw_info, (struct hw_info *)arg, sizeof(struct hw_info))) {
-			pr_err("memryx: fops_ioctl: MEMX_CONFIG_MPU_GROUP, copy_from_user failed!\n");
+			pr_err("memryx: fops_ioctl: MEMX_CONFIG_MPU_GROUP, copy_from_user failed\n");
 			ret = -ENOMEM;
 			goto done;
 		}
 		if (memx_pcie_config_mpu_group(memx_dev, &hw_info)) {
-			pr_err("memryx: PCIe MEMX_CONFIG_MPU_GROUP failed!\n");
+			pr_err("memryx: PCIe MEMX_CONFIG_MPU_GROUP failed\n");
 			ret = -EIO;
 			goto done;
 		}
 		memmove(&hw_info, &memx_dev->mpu_data.hw_info, sizeof(struct hw_info));
 		if (copy_to_user((void __user *)arg, &hw_info, sizeof(struct hw_info))) {
-			pr_err("memryx: fops_ioctl: MEMX_CONFIG_MPU_GROUP, copy_to_user failed!\n");
+			pr_err("memryx: fops_ioctl: MEMX_CONFIG_MPU_GROUP copy_to_user failed\n");
 			ret = -ENOMEM;
 			goto done;
 		}
@@ -262,7 +310,7 @@ static long memx_fops_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 		struct memx_chip_id memx_chip_id = {0};
 
 		if (copy_from_user(&memx_chip_id, (struct memx_chip_id *)arg, sizeof(memx_chip_id))) {
-			pr_err("memryx: MEMX_INIT_WTMEM_FMAP: copy_from_user failed!\n");
+			pr_err("memryx: MEMX_INIT_WTMEM_FMAP copy_from_user failed\n");
 			ret = -ENOMEM;
 			goto done;
 		}
@@ -275,7 +323,7 @@ static long memx_fops_ioctl(struct file *filp, u32 cmd, unsigned long arg)
         struct transport_cmd *pCmd = &tCmd;
         volatile u8 *vCmd = (volatile u8 *)pCmd;
 		if (copy_from_user((void *)pCmd, (struct transport_cmd *)arg, sizeof(struct transport_cmd))) {
-			pr_err("memryx: MEMX_SET_DEVICE_FEATURE: copy_from_user failed!\n");
+			pr_err("memryx: MEMX_VENDOR_CMD copy_from_user failed\n");
 			ret = -ENOMEM;
 			goto done;
 		}
@@ -300,7 +348,7 @@ static long memx_fops_ioctl(struct file *filp, u32 cmd, unsigned long arg)
         }
 
 		if (copy_to_user((void __user *)arg, (void *) pCmd, sizeof(struct transport_cmd))) {
-			pr_err("memryx: fops_ioctl: MEMX_SET_DEVICE_FEATURE, copy_to_user failed!\n");
+			pr_err("memryx: fops_ioctl: MEMX_SET_DEVICE_FEATURE copy_to_user failed\n");
 			ret = -ENOMEM;
 			goto done;
 		}
@@ -308,7 +356,7 @@ static long memx_fops_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 	break;
 	case MEMX_SET_THROUGHPUT_INFO: {
 		if (copy_from_user(&udrv_throughput_info, (struct memx_throughput_info *)arg, sizeof(struct memx_throughput_info))) {
-			pr_err("memryx: MEMX_SET_THROUGHPUT_INFO: copy_from_user failed!\n");
+			pr_err("memryx: MEMX_SET_THROUGHPUT_INFO copy_from_user failed\n");
 			ret = -ENOMEM;
 			goto done;
 		}
@@ -316,12 +364,12 @@ static long memx_fops_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 	break;
 	default:
 		ret = -EFAULT;
-		pr_err("memryx: fops_ioctl: (%u-%u): unsupported ioctl cmd(%u)!\n", major, minor, cmd);
+		pr_err("memryx: fops_ioctl: (%u-%u): unsupported ioctl cmd(%u)\n", major, minor, cmd);
 	}
 done:
 	up(&memx_dev->mutex);
 #ifdef DEBUG
-	pr_info("fops_ioctl: (%u-%u): finish\n", major, minor);
+	pr_info("memryx: fops_ioctl: (%u-%u): finished\n", major, minor);
 #endif
 	return ret;
 }
@@ -338,19 +386,30 @@ static s32 memx_fops_open(struct inode *inode, struct file *filp)
 	struct memx_pcie_dev *memx_dev = memx_get_device_by_index(minor);
 
 	if (!memx_dev) {
-		pr_err("memryx: fops_open: PCIe device not found for /dev/memx%d node!\n", minor);
+		pr_err("memryx: fops_open: PCIe device not found for /dev/memx%d node\n", minor);
 		ret = -ENODEV;
 		goto exit;
 	}
-	memx_dev->mpu_data.rx_ctrl.is_abort = 0;
-	for (chip_id = 0; chip_id < MAX_SUPPORT_CHIP_NUM; chip_id++)
-		memx_dev->mpu_data.tx_ctrl[chip_id].is_abort = 0;
 
-	memx_dev->mpu_data.fw_ctrl.is_abort = 0;
+	if (down_interruptible(&memx_dev->mutex)) {
+		pr_err("memryx: fops_close: down_interruptible failed\n");
+		return -ERESTARTSYS;
+	}
 
+	if (memx_dev->reference_count == 0) {
+		memx_dev->mpu_data.rx_ctrl.is_abort = 0;
+		memx_dev->mpu_data.rx_ctrl.is_read_abort = 0;
+		for (chip_id = 0; chip_id < MAX_SUPPORT_CHIP_NUM; chip_id++)
+			memx_dev->mpu_data.tx_ctrl[chip_id].is_abort = 0;
+
+		memx_dev->mpu_data.fw_ctrl.is_abort = 0;
+	}
+
+	memx_dev->reference_count++;
 	filp->private_data = memx_dev;
+	up(&memx_dev->mutex);
 #ifdef DEBUG
-	pr_info("fops_open: open on /dev/memx%d(%d-%d), vendor_id(%0x), devid_id(%0x))\n",
+	pr_info("memryx: fops_open: open on /dev/memx%d(%d-%d), vendor_id(%0x), devid_id(%0x))\n",
 		memx_dev->minor_index, major, minor, (memx_dev ? memx_dev->pDev->vendor : 0), (memx_dev ? memx_dev->pDev->device : 0));
 #endif
 exit:
@@ -367,30 +426,15 @@ static s32 memx_fops_release(struct inode *inode, struct file *filp)
 
 	if (memx_dev) {
 		if (down_interruptible(&memx_dev->mutex)) {
-			pr_err("memryx: fops_close: down_interruptible failed!\n");
+			pr_err("memryx: fops_close: down_interruptible failed\n");
 			return -ERESTARTSYS;
 		}
-		if (atomic_dec_and_test(&memx_dev->ref_count)) {
-			// deallocate device if already removed
-			if (!memx_dev->pDev) {
-#ifdef DEBUG
-				pr_info("fops_close: freed device %d\n", memx_dev->minor_index);
-#endif
-				up(&memx_dev->mutex);
-				devm_kfree(&memx_dev->pDev->dev, memx_dev);
-				memx_dev = NULL;
-			} else {
-#ifdef DEBUG
-				pr_info("fops_close: released resources for device %d\n", memx_dev->minor_index);
-#endif
-				up(&memx_dev->mutex);
-			}
-		} else {
-			up(&memx_dev->mutex);
-		}
+
+		memx_dev->reference_count--;
+		up(&memx_dev->mutex);
 	}
 #ifdef DEBUG
-	pr_info("fops_close: (%d-%d) success.\n", major, minor);
+	pr_info("memryx: fops_close: (%d-%d) success\n", major, minor);
 #endif
 	return 0;
 }
@@ -402,7 +446,7 @@ static ssize_t memx_fops_read(struct file *filp, char __user *buf, size_t count,
 	struct memx_pcie_dev *memx_dev = (struct memx_pcie_dev *)filp->private_data;
 
 	if (!memx_dev || !memx_dev->pDev) {
-		pr_err("memryx: fops_read: fail by -ENODEV!\n");
+		pr_err("memryx: fops_read: failed with -ENODEV\n");
 		indicator = -ENODEV;
 		return indicator;
 	}
@@ -421,17 +465,17 @@ static ssize_t memx_fops_read(struct file *filp, char __user *buf, size_t count,
 				return indicator;
 			}
 			if (wq_status == -ERESTARTSYS) {
-				pr_notice("memryx: fops_read: cancelled by interrupt signal\n");
+				pr_warn("memryx: fops_read: cancelled by interrupt signal\n");
 				break;
 			}
 
 			if (wq_status < 1)
-				pr_notice("memryx: fops_read: wait timeout 10(s), retrying again\n");
+				pr_info("memryx: fops_read: wait timeout 10(s), retrying again\n");
 
 		} while (wq_status < 1);
 		if (wq_status >= 1) {
 			if (!kfifo_out_locked(&memx_dev->rx_msix_fifo, &indicator, sizeof(s32), &memx_dev->mpu_data.rx_ctrl.lock)) {
-				pr_err("memryx: fops_read: kfifo_out is empty!!\n");
+				pr_err("memryx: fops_read: kfifo_out is empty\n");
 				indicator = -EFAULT;
 				return indicator;
 			}
@@ -444,12 +488,12 @@ static ssize_t memx_fops_read(struct file *filp, char __user *buf, size_t count,
 		THROUGHPUT_ADD(rx_time_us, ktime_us_delta(rx_end_time, rx_start_time));
 		dma_sync_single_for_cpu(&memx_dev->pDev->dev, (dma_addr_t)memx_dev->mpu_data.hw_info.fw.rx_dma_coherent_buffer_base, DMA_COHERENT_BUFFER_SIZE_2MB, DMA_BIDIRECTIONAL);
 		if (copy_to_user((void __user *)buf, memx_dev->mpu_data.rx_dma_coherent_buffer_virtual_base, count)) {
-			pr_err("memryx: fops_read: Copy egress_dcore_flow_data to user failed!\n");
+			pr_err("memryx: fops_read: copy egress_dcore_flow_data to user failed\n");
 			indicator = -EFAULT;
 			return indicator;
 		}
 #ifdef DEBUG
-		pr_info("read: received ofmap rx done notification from msix isr(%d)\n", indicator);
+		pr_info("memryx: read: received ofmap rx done notification from msix isr(%d)\n", indicator);
 #endif
 	}
 	return indicator;
@@ -466,11 +510,11 @@ static ssize_t memx_fops_write(struct file *filp, const char __user *buf, size_t
 
 	memx_dev = (struct memx_pcie_dev *)filp->private_data;
 	if (!memx_dev || !memx_dev->pDev) {
-		pr_err("memryx: fops_write: fail by -ENODEV!\n");
+		pr_err("memryx: fops_write: failed with -ENODEV\n");
 		return -ENODEV;
 	}
 	if (down_interruptible(&memx_dev->mutex)) {
-		pr_err("memryx: fops_write: get memx_dev->mutex fail!\n");
+		pr_err("memryx: fops_write: get memx_dev->mutex failed\n");
 		return -ERESTARTSYS;
 	}
 
@@ -480,12 +524,12 @@ static ssize_t memx_fops_write(struct file *filp, const char __user *buf, size_t
 
 	target_chip_id = *(u32 *)(tx_dma_buf + 8);
 	if (target_chip_id >= MAX_SUPPORT_CHIP_NUM) {
-		pr_err("memryx: fops_write: Invalid target chip id: %d!\n", target_chip_id);
+		pr_err("memryx: fops_write: invalid target chip id: %d\n", target_chip_id);
 		goto done;
 	}
 #ifdef DEBUG
-	pr_info("fops_write: Copy from user %ld!\n", count);
-	pr_info("fops_write: target_chip_id(%d)\n", target_chip_id);
+	pr_info("memryx: fops_write: copy from user %ld\n", count);
+	pr_info("memryx: fops_write: target_chip_id(%d)\n", target_chip_id);
 #endif
 
 	if (target_chip_id == 0 && memx_dev->mpu_data.hw_info.chip.roles[target_chip_id] == ROLE_SINGLE) {
@@ -502,19 +546,20 @@ static ssize_t memx_fops_write(struct file *filp, const char __user *buf, size_t
 		if (memx_dev->mpu_data.tx_ctrl[target_chip_id].is_abort) {
 			wq_status = -ERESTARTSYS;
 			memx_dev->mpu_data.tx_ctrl[target_chip_id].is_abort = 0;
+			up(&memx_dev->mutex);
 			return 0;
 		}
 		if (wq_status == -ERESTARTSYS) {
-			pr_notice("memryx: fops_write: cancelled by interrupt signal\n");
+			pr_warn("memryx: fops_write: cancelled by interrupt signal\n");
 			break;
 		}
 		if (wq_status < 1)
-			pr_notice("memryx: fops_write: wait timeout 1(s), retrying again\n");
+			pr_info("memryx: fops_write: wait timeout 1(s), retrying again\n");
 
 	} while (wq_status < 1);
 	if (wq_status >= 1) {
 #ifdef DEBUG
-		pr_info("write: received ifmap tx done notification from msix isr(%d)\n", memx_dev->mpu_data.tx_ctrl[target_chip_id].indicator);
+		pr_info("memryx: write: received ifmap tx done notification from msix isr(%d)\n", memx_dev->mpu_data.tx_ctrl[target_chip_id].indicator);
 #endif
 		tx_end_time = ktime_get();
 		THROUGHPUT_ADD(tx_size, count);
@@ -538,18 +583,18 @@ static s32 memx_fops_mmap(struct file *filp, struct vm_area_struct *vma)
 
 	memx_dev = (struct memx_pcie_dev *)filp->private_data;
 	if (!memx_dev || !memx_dev->pDev) {
-		pr_err("memryx: fops_mmap: fail by -ENODEV!\n");
+		pr_err("memryx: fops_mmap: failed with -ENODEV\n");
 		return -ENODEV;
 	}
 	if (down_interruptible(&memx_dev->mutex)) {
-		pr_err("memryx: fops_mmap: get memx_dev->mutex fail!\n");
+		pr_err("memryx: fops_mmap: get memx_dev->mutex failed\n");
 		return -ERESTARTSYS;
 	}
 
 	map_size = vma->vm_end - vma->vm_start;
 	map_offs = vma->vm_pgoff << PAGE_SHIFT;
 #ifdef DEBUG
-	pr_info("fops_mmap: vma->vm_pgoff %ld, map_size %ld!\n", vma->vm_pgoff, map_size);
+	pr_info("memryx: fops_mmap: vma->vm_pgoff %ld, map_size %ld\n", vma->vm_pgoff, map_size);
 #endif
 
 	if (map_offs == 0) {
@@ -560,7 +605,7 @@ static s32 memx_fops_mmap(struct file *filp, struct vm_area_struct *vma)
 			if (((map_size == MEMX_PCIE_BAR0_MMAP_SIZE_256MB) && (memx_dev->bar_mode != MEMXBAR_XFLOW256MB_SRAM1MB)) ||
 				((map_size == MEMX_PCIE_BAR0_MMAP_SIZE_128MB) && (memx_dev->bar_mode != MEMXBAR_XFLOW128MB64B_SRAM1MB)) ||
 				((map_size == MEMX_PCIE_BAR1_MMAP_SIZE_1MB) && (memx_dev->bar_mode != MEMXBAR_SRAM1MB))) {
-				pr_err("memryx: fops_mmap: wrong mmap size %zx for bar mode %d!\n", map_size, memx_dev->bar_mode);
+				pr_err("memryx: fops_mmap: wrong mmap size %zx for bar mode %d\n", map_size, memx_dev->bar_mode);
 				ret = -1;
 				break;
 			}
@@ -590,14 +635,14 @@ static s32 memx_fops_mmap(struct file *filp, struct vm_area_struct *vma)
 		} break;
 
 		default: {
-			pr_err("memryx: fops_mmap: wrong map_size: %ld!\n", map_size);
+			pr_err("memryx: fops_mmap: wrong map_size: %ld\n", map_size);
 			ret = -1;
 		} break;
 		}
 	} else if ((map_offs == MEMX_PCIE_BAR0_MMAP_SIZE_16MB) || (map_offs == MEMX_PCIE_BAR0_MMAP_SIZE_64MB)) {
 		if (((map_offs == MEMX_PCIE_BAR0_MMAP_SIZE_16MB) && (map_size != MEMX_PCIE_BAR0_MMAP_SIZE_16MB)) ||
 			((map_offs == MEMX_PCIE_BAR0_MMAP_SIZE_64MB) && (map_size != MEMX_PCIE_BAR0_MMAP_SIZE_64MB))) {
-			pr_err("memryx: fops_mmap: wrong map_size: %ld!\n", map_size);
+			pr_err("memryx: fops_mmap: wrong map_size: %ld\n", map_size);
 			ret = -1;
 		} else {
 			// mapping xflow_vbuf to user
@@ -606,7 +651,7 @@ static s32 memx_fops_mmap(struct file *filp, struct vm_area_struct *vma)
 					pgprot_noncached(vma->vm_page_prot));
 		}
 	} else {
-		pr_err("memryx: fops_mmap: wrong pgoff: %ld!\n", vma->vm_pgoff);
+		pr_err("memryx: fops_mmap: wrong pgoff: %ld\n", vma->vm_pgoff);
 		ret = -1;
 	}
 
@@ -653,13 +698,13 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 	struct memx_firmware_bin memx_fw_bin;
 
 #ifdef DEBUG
-	pr_info("bdf(bus(%04x):device(%02x):func(%x)), Vid(%04x):Did(%04x).\n",
+	pr_info("memryx: bdf(bus(%04x):device(%02x):func(%x)), Vid(%04x):Did(%04x)\n",
 		(pDev->bus) ? pDev->bus->number : 0, (pDev->slot) ? pDev->slot->number : 0, pDev->devfn,
 																	pDev->vendor, pDev->device);
 #endif
 	// Sanity check for device identification
 	if (pDev->vendor != MEMX_PCIE_VENDOR_ID) {
-		pr_err("memryx: detected vendor mismatch Vid(%0x):Did(%0x)!\n", pDev->vendor, pDev->device);
+		pr_err("memryx: detected vendor mismatch Vid(%0x):Did(%0x)\n", pDev->vendor, pDev->device);
 		ret = -ENODEV;
 		goto probe_exit;
 	}
@@ -673,21 +718,21 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 	// Enable the device before we access any pci resource.
 	ret = pcim_enable_device(pDev);
 	if (ret) {
-		pr_err("memryx: failed calling pci_enable_device: %0x:%0x, ret(%d)!\n", pDev->vendor, pDev->device, ret);
+		pr_err("memryx: failed calling pci_enable_device: %0x:%0x, ret(%d)\n", pDev->vendor, pDev->device, ret);
 		goto err_devm_init;
 	}
 #ifdef DEBUG
-	pr_info("Device enabled: %0x:%0x\n", pDev->vendor, pDev->device);
+	pr_info("memryx: device enabled: %0x:%0x\n", pDev->vendor, pDev->device);
 #endif
 	pci_set_master(pDev);
 	// Set the DMA mask size
 	ret = dma_set_mask_and_coherent(&pDev->dev, DMA_BIT_MASK(64));
 	if (!ret) {
 #ifdef DEBUG
-		pr_info("Enabled 32 bit dma for %0x:%0x\n", pDev->vendor, pDev->device);
+		pr_info("memryx: enabled 32 bit dma for %0x:%0x\n", pDev->vendor, pDev->device);
 #endif
 	} else {
-		pr_err("memryx: error(%d) enabling dma for %0x:%0x!\n", ret, pDev->vendor, pDev->device);
+		pr_err("memryx: error(%d) enabling dma for %0x:%0x\n", ret, pDev->vendor, pDev->device);
 		goto err_dma_init;
 	}
 
@@ -756,7 +801,7 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 	// Allocate and configure BARs(i.e request MMIO resources)
 	ret = pci_request_regions(pDev, PCIE_NAME);
 	if (ret) {
-		pr_err("memryx: Error(%d) allocating bars for %0x:%0x!\n", ret, pDev->vendor, pDev->device);
+		pr_err("memryx: error(%d) allocating bars for %0x:%0x\n", ret, pDev->vendor, pDev->device);
 		goto err_pcie_init;
 	}
 	for (bar = 0; bar < MAX_BAR; bar++) {
@@ -768,19 +813,19 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 		}
 	}
 	if (!(bars[BAR0].available || bars[BAR1].available)) {
-		pr_err("memryx: No available bars for %0x:%0x!\n", pDev->vendor, pDev->device);
+		pr_err("memryx: no available bars for %0x:%0x\n", pDev->vendor, pDev->device);
 		ret = -ENODEV;
 		goto err_bar_init;
 	}
 
 	msix_vec_count = pci_msix_vec_count(pDev);
 	if (msix_vec_count <= 0) {
-		pr_err("memryx: Get number of MSX-X interrupt vectors available on device fail!\n");
+		pr_err("memryx: failed to get number of MSX-X interrupt vectors available on device\n");
 		ret = -ENODEV;
 		goto err_bar_init;
 	}
 #ifdef DEBUG
-	pr_info("msix_vec_count = 0x%x\n", msix_vec_count);
+	pr_info("memryx: msix_vec_count = 0x%x\n", msix_vec_count);
 #endif
 	// We can do some verdor init and setting according to our own configuration space registers (64 - 256 Byte)
 	memx_dev->int_info.max_hw_support_msix_count = msix_vec_count;
@@ -789,9 +834,10 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 
 	memx_dev->pDev = pDev;
 	sema_init(&memx_dev->mutex, 1);
-	atomic_set(&memx_dev->ref_count, 0);
+	memx_dev->reference_count = 0;
 
 	memx_dev->mpu_data.rx_ctrl.is_abort = 0;
+	memx_dev->mpu_data.rx_ctrl.is_read_abort = 0;
 	for (chip_id = 0; chip_id < MAX_SUPPORT_CHIP_NUM; chip_id++) {
 		memx_dev->mpu_data.tx_ctrl[chip_id].is_abort = 0;
 		init_waitqueue_head(&memx_dev->mpu_data.tx_ctrl[chip_id].wq);
@@ -809,6 +855,8 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 	spin_lock_init(&memx_dev->mpu_data.rx_ctrl.lock);
 	spin_lock_init(&memx_dev->mpu_data.fw_ctrl.lock);
 
+	mutex_init(&memx_dev->adminlock);
+
 	spin_lock(&memx_dev->mpu_data.rx_ctrl.lock);
 	memx_dev->mpu_data.rx_ctrl.indicator = -1;
 	spin_unlock(&memx_dev->mpu_data.rx_ctrl.lock);
@@ -820,14 +868,14 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 
 	ret = kfifo_alloc(&memx_dev->rx_msix_fifo, sizeof(s32)*MAX_CHIP_NUM, GFP_KERNEL);
 	if (ret) {
-		pr_err("memryx: Kfifo_alloc failed(%d)!\n", ret);
+		pr_err("memryx: kfifo_alloc failed(%d)\n", ret);
 		goto err_bar_init;
 	}
 
 	for (bar = 0; bar < MAX_BAR; bar++) {
 		memx_dev->bar_info[bar] = bars[bar];
 #ifdef DEBUG
-		pr_info("bar(%d) - vaddr(%p) paddr_hi(0x%08x), paddr_lo(%08x), map_size(0x%llx), active(%d)\n", bar,
+		pr_info("memryx: bar(%d) - vaddr(%p) paddr_hi(0x%08x), paddr_lo(%08x), map_size(0x%llx), active(%d)\n", bar,
 							memx_dev->bar_info[bar].iobase,
 							(u32)((memx_dev->bar_info[bar].base >> 32) & 0xFFFFFFFF),
 							(u32)((memx_dev->bar_info[bar].base) & 0xFFFFFFFF),
@@ -848,7 +896,7 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 		memx_dev->xflow_vbuf_bar_idx = BAR0;
 		memx_dev->sram_bar_idx = BAR1;
 		#ifdef DEBUG
-		pr_info("MEMX 2BAR-256MB+1MB\r\n");
+		pr_info("memryx: MEMX 2BAR-256MB+1MB\r\n");
 		#endif
 	} else if ((memx_dev->bar_info[1].size == 0) && (memx_dev->bar_info[2].size == MEMX_PCIE_BAR1_MMAP_SIZE_1MB)) {
 		memx_dev->bar_mode = MEMXBAR_XFLOW128MB64B_SRAM1MB;
@@ -859,7 +907,7 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 		memx_dev->xflow_vbuf_bar_offset = XFLOW_VIRTUAL_BUFFER_PREFIX;
 
 		#ifdef DEBUG
-		pr_info("MEMX 2BAR-256MB64+1MB\r\n");
+		pr_info("memryx: MEMX 2BAR-256MB64+1MB\r\n");
 		#endif
 	} else if ((memx_dev->bar_info[1].size == 0) && (memx_dev->bar_info[0].size == MEMX_PCIE_BAR1_MMAP_SIZE_1MB)) {
 		memx_dev->bar_mode = MEMXBAR_SRAM1MB;
@@ -868,7 +916,7 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 		memx_dev->sram_bar_idx = BAR0;
 
 		#ifdef DEBUG
-		pr_info("MEMX 1BAR-1MB\r\n");
+		pr_info("memryx: MEMX 1BAR-1MB\r\n");
 		#endif
 	} else if (((memx_dev->bar_info[0].size == MEMX_PCIE_BAR0_MMAP_SIZE_16MB) || (memx_dev->bar_info[0].size == MEMX_PCIE_BAR0_MMAP_SIZE_64MB)) &&
 			   ((memx_dev->bar_info[2].size == MEMX_PCIE_BAR0_MMAP_SIZE_16MB) || (memx_dev->bar_info[2].size == MEMX_PCIE_BAR0_MMAP_SIZE_64MB)) &&
@@ -886,10 +934,10 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 		memx_dev->xflow_vbuf_bar_offset = XFLOW_VIRTUAL_BUFFER_PREFIX;
 
 		#ifdef DEBUG
-		pr_info("MEMX 3BAR-VB+CI+SRAM %s MB\r\n", (memx_dev->bar_info[0].size == MEMX_PCIE_BAR0_MMAP_SIZE_16MB)?"16":"64");
+		pr_info("memryx: MEMX 3BAR-VB+CI+SRAM %s MB\r\n", (memx_dev->bar_info[0].size == MEMX_PCIE_BAR0_MMAP_SIZE_16MB)?"16":"64");
 		#endif
 	} else {
-		pr_err("memryx: NotValid BAR combination!\r\n");
+		pr_err("memryx: invalid BAR combination\r\n");
 		memx_dev->bar_mode = MEMXBAR_NOTVALID;
 		goto err_bar_init;
 	}
@@ -913,7 +961,7 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 	cdev_add(&memx_dev->char_cdev, MKDEV(MAJOR(g_memx_devno), memx_dev->minor_index), 1);
 	char_dev = device_create(g_char_device_class, NULL, MKDEV(MAJOR(g_memx_devno), memx_dev->minor_index), NULL, DEVICE_NODE_NAME, memx_dev->minor_index);
 	if (IS_ERR(char_dev)) {
-		pr_err("memryx: failed to create memx device node(%d)\n", memx_dev->minor_index);
+		pr_err("memryx: failed createing memx device node(%d)\n", memx_dev->minor_index);
 		ret = PTR_ERR(char_dev);
 		goto err_dev_init;
 	}
@@ -922,7 +970,7 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 	cdev_add(&memx_dev->feature_cdev, MKDEV(MAJOR(g_feature_devno), memx_dev->minor_index), 1);
 	feature_dev = device_create(g_char_device_class, NULL, MKDEV(MAJOR(g_feature_devno), memx_dev->minor_index), NULL, DEVICE_NODE_NAME "_feature", memx_dev->minor_index);
 	if (IS_ERR(feature_dev)) {
-		pr_err("memryx: failed to create feature device node(%d)\n", memx_dev->minor_index);
+		pr_err("memryx: failed createing feature device node(%d)\n", memx_dev->minor_index);
 		ret = PTR_ERR(feature_dev);
 		goto err_dev_init;
 	}
@@ -932,7 +980,7 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 	if (memx_dev->fs.type) {
 		ret = memx_fs_init(memx_dev);
 		if (ret) {
-			pr_err("memryx: creating virtual filesystem node failed!\n");
+			pr_err("memryx: creating debug file system node failed\n");
 			goto err_dev_init;
 		}
 	}
@@ -943,7 +991,7 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 	memx_fw_bin.size = 0;
 	ret = memx_firmware_init(memx_dev, &memx_fw_bin);
 	if (ret) {
-		pr_err("memryx: failed to init device firmware(%d)\n", ret);
+		pr_err("memryx: failed init firmware(%d)\n", ret);
 		goto err_fs_init;
 	}
 
@@ -970,7 +1018,7 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 				memx_xflow_write(memx_dev, i, MEMX_DBGLOG_CONTROL_BASE, 0x6C, pcie_aspm&0xF, false);
 		}
 	}
-	pr_info("memryx: finished search for PCIe-connected devices\n");
+	pr_info("memryx: PCIe probe success\n");
 
 	return 0;
 
@@ -1020,7 +1068,7 @@ static void memx_pcie_remove(struct pci_dev *pDev)
 	struct memx_pcie_dev *memx_dev = (struct memx_pcie_dev *)pci_get_drvdata(pDev);
 
 	if (!memx_dev) {
-		pr_info("memryx: device_remove: char device was already removed!\n");
+		pr_info("memryx: memx_remove: pcie device already removed\n");
 		return;
 	}
 
@@ -1075,11 +1123,7 @@ static void memx_pcie_remove(struct pci_dev *pDev)
 
 	up(&memx_dev->mutex);
 
-	if (atomic_read(&memx_dev->ref_count) == 0) {
-		pr_info("memryx: device_remove: Freed memx_dev, /dev/memx%d\n", memx_dev->minor_index);
-		devm_kfree(&pDev->dev, memx_dev);
-	}
-	pr_info("memryx: device_remove: success\n");
+	pr_info("memryx: memx_remove: pcie remove success\n");
 }
 
 #ifdef CONFIG_PM
@@ -1091,7 +1135,7 @@ static int memx_pcie_suspend(struct pci_dev *pDev, pm_message_t mesg)
 	if (mesg.event != pDev->dev.power.power_state.event
 			&& (mesg.event & PM_EVENT_SLEEP)) {
 
-		pr_info("into %s\n", __func__);
+		pr_info("memryx: into %s\n", __func__);
 
 		down(&memx_dev->mutex);
 		memx_deinit_msix_irq(memx_dev);
@@ -1113,15 +1157,16 @@ static int memx_pcie_resume(struct pci_dev *pDev)
 	int rc = 0;
 
 	if (pDev->dev.power.power_state.event != PM_EVENT_ON) {
-		pr_info("into %s\n", __func__);
+		pr_info("memryx: into %s\n", __func__);
 		memx_enable_device_msix_capability(memx_dev);
 		memx_fw_bin.request_firmware_update_in_linux = true;
 		strscpy(&memx_fw_bin.name[0], FIRMWARE_BIN_NAME, FILE_NAME_LENGTH - 1);
 		memx_fw_bin.buffer = NULL;
 		memx_fw_bin.size = 0;
 		rc = memx_firmware_init(memx_dev, &memx_fw_bin);
+		memx_fw_log_init(memx_dev);
 		if (rc)
-			pr_err("memryx: Failed to init firmware(%d)!\n", rc);
+			pr_err("memryx: failed init firmware(%d)\n", rc);
 
 		if (rc == 0)
 			pDev->dev.power.power_state = PMSG_ON;
@@ -1150,17 +1195,17 @@ static s32 __init memx_pcie_module_init(void)
 
 	ret = alloc_chrdev_region(&g_memx_devno, 0, MAX_CHIP_NUM, PCIE_NAME);
 	if (ret < 0) {
-		pr_err("memryx: module_init: failed to call alloc_chrdev_region for g_memx_devno, ret(%d)!\n", ret);
+		pr_err("memryx: module_init: failed to call alloc_chrdev_region for g_memx_devno, ret(%d)\n", ret);
 		return ret;
 	}
 	ret = alloc_chrdev_region(&g_feature_devno, 0, MAX_CHIP_NUM, PCIE_NAME);
 	if (ret < 0) {
-		pr_err("memryx: module_init: failed to call alloc_chrdev_region for g_feature_devno, ret(%d)!\n", ret);
+		pr_err("memryx: module_init: failed to call alloc_chrdev_region for g_feature_devno, ret(%d)\n", ret);
 		return ret;
 	}
 
 #ifdef DEBUG
-	pr_info("alloc_chrdev_region g_memx_devno(%u, %u) g_feature_devno(%u, %u)\n", MAJOR(g_memx_devno), MINOR(g_memx_devno), MAJOR(g_feature_devno), MINOR(g_feature_devno));
+	pr_info("memryx: alloc_chrdev_region g_memx_devno(%u, %u) g_feature_devno(%u, %u)\n", MAJOR(g_memx_devno), MINOR(g_memx_devno), MAJOR(g_feature_devno), MINOR(g_feature_devno));
 #endif
 
 #if (KERNEL_VERSION(6, 4, 0) > _LINUX_VERSION_CODE_)
@@ -1169,21 +1214,21 @@ static s32 __init memx_pcie_module_init(void)
 	g_char_device_class = class_create(DEVICE_CLASS_NAME);
 #endif
 	if (g_char_device_class == NULL) {
-		pr_err("memryx: module_init: failed to call class_create!\n");
+		pr_err("memryx: module_init: failed to call class_create\n");
 		return -1;
 	}
 	g_char_device_class->devnode = memx_pcie_devnode;
 
 	ret = pci_register_driver(&memx_pcie_driver);
 	if (ret != 0) {
-		pr_err("memryx: module_init: failed to call pci_register_driver(%d)!\n", ret);
+		pr_err("memryx: module_init: failed to call pci_register_driver(%d)\n", ret);
 		class_destroy(g_char_device_class);
 		unregister_chrdev_region(g_memx_devno, MAX_CHIP_NUM);
 		unregister_chrdev_region(g_feature_devno, MAX_CHIP_NUM);
 		return ret;
 	}
 
-	pr_info("memryx: module_init: kernel module loaded. char major Id(%d).\n", MAJOR(g_memx_devno));
+	pr_info("memryx: memx_init: pcie init success, char major Id(%d)\n", MAJOR(g_memx_devno));
 	return ret;
 }
 
@@ -1196,7 +1241,7 @@ void __exit memx_pcie_module_exit(void)
 	unregister_chrdev_region(g_memx_devno, MAX_CHIP_NUM);
 	unregister_chrdev_region(g_feature_devno, MAX_CHIP_NUM);
 
-	pr_info("memryx: module exit: pcie exit success.\n");
+	pr_info("memryx: memx_exit: pcie exit success\n");
 }
 
 module_init(memx_pcie_module_init);

@@ -11,13 +11,17 @@ static int memx_temp_read(struct device *dev,
 				  u32 attr, int channel, long *temp)
 {
 	struct memx_pcie_dev *memx_dev = dev_get_drvdata(dev);
-	u32 data = 0;
+	u32 temperature_Kelvin = 0;
 
 	/*Read and calculate the average chip temperature*/
-	data = memx_sram_read(memx_dev, (MXCNST_TEMP_BASE+(channel<<2)));
-	*temp = ((data&0xFFFF) - 273)*1000;
+	if (channel < memx_dev->mpu_data.hw_info.chip.total_chip_cnt) {
+		temperature_Kelvin = memx_sram_read(memx_dev, (MXCNST_TEMP_BASE+(channel<<2)));
+		*temp = (int)(((temperature_Kelvin & 0xFFFF) - 273) * 1000);
 
-	return 0;
+		return 0;
+	} else {
+		return -EOPNOTSUPP;
+	}
 }
 
 static umode_t memx_is_visible(const void *data,
@@ -33,12 +37,10 @@ static umode_t memx_is_visible(const void *data,
 }
 
 static const struct hwmon_channel_info *memx_info[] = {
-    // FIXME: cutting this to just 4 devices since that's all current SDK 1.2
-    //        users would have access to -- change in future!
 	HWMON_CHANNEL_INFO(temp,
-		//HWMON_T_INPUT, HWMON_T_INPUT, HWMON_T_INPUT, HWMON_T_INPUT,
-		//HWMON_T_INPUT, HWMON_T_INPUT, HWMON_T_INPUT, HWMON_T_INPUT,
-		//HWMON_T_INPUT, HWMON_T_INPUT, HWMON_T_INPUT, HWMON_T_INPUT,
+		HWMON_T_INPUT, HWMON_T_INPUT, HWMON_T_INPUT, HWMON_T_INPUT,
+		HWMON_T_INPUT, HWMON_T_INPUT, HWMON_T_INPUT, HWMON_T_INPUT,
+		HWMON_T_INPUT, HWMON_T_INPUT, HWMON_T_INPUT, HWMON_T_INPUT,
 		HWMON_T_INPUT, HWMON_T_INPUT, HWMON_T_INPUT, HWMON_T_INPUT),
 	NULL,
 };
@@ -58,7 +60,7 @@ s32 memx_fs_hwmon_init(struct memx_pcie_dev *memx_dev)
 	int minor_index;
 
 	if (!memx_dev) {
-		pr_err("memx_fs_hwmon init: memx_dev is NULL\n");
+		pr_err("memryx: memx_fs_hwmon init: memx_dev is NULL\n");
 		return -EINVAL;
 	}
 
@@ -74,7 +76,7 @@ s32 memx_fs_hwmon_init(struct memx_pcie_dev *memx_dev)
 void memx_fs_hwmon_deinit(struct memx_pcie_dev *memx_dev)
 {
 	if (!memx_dev) {
-		pr_err("memx_hwmon_deinit: memx_dev is NULL\n");
+		pr_err("memryx: memx_hwmon_deinit: memx_dev is NULL\n");
 		return;
 	}
 }
@@ -83,16 +85,17 @@ void memx_fs_hwmon_deinit(struct memx_pcie_dev *memx_dev)
 s32 memx_fs_hwmon_init(struct memx_pcie_dev *memx_dev)
 {
 	if (!memx_dev) {
-		pr_err("memx_fs_hwmon init: memx_dev is NULL\n");
+		pr_err("memryx: memx_fs_hwmon init: memx_dev is NULL\n");
 		return -EINVAL;
 	}
+	return 0;
 }
 
 
 void memx_fs_hwmon_deinit(struct memx_pcie_dev *memx_dev)
 {
 	if (!memx_dev) {
-		pr_err("memx_hwmon_deinit: memx_dev is NULL\n");
+		pr_err("memryx: memx_hwmon_deinit: memx_dev is NULL\n");
 		return;
 	}
 }

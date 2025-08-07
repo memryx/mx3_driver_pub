@@ -183,7 +183,7 @@ static ssize_t verinfo_show(struct kobject *kobj, struct kobj_attribute *attr, c
 	len = sprintf(to_user_buf_pos, "pcie intf device:\n");
 	to_user_buf_pos += len;
 	res += len;
-	len = sprintf(to_user_buf_pos, "SDK version: %s\n", SDK_VERSION);
+	len = sprintf(to_user_buf_pos, "SDK version: %s\n", SDK_RELEASE_VERSION);
 	to_user_buf_pos += len;
 	res += len;
 	len = sprintf(to_user_buf_pos, "kdriver version: %s\n", PCIE_VERSION);
@@ -427,7 +427,7 @@ static ssize_t debug_store(struct kobject *kobj, struct kobj_attribute *attr, co
 
 	ret = memx_fs_parse_cmd_and_exec(memx_dev, user_input_buf, user_input_buf_size);
 	if (ret != 0) {
-		pr_err("memryx: memx_proc_write: parse or exec failed, err(%d)\n", ret);
+		pr_err("memryx: memx_proc_write: parse or exec fail!, err(%d)\n", ret);
 		return ret;
 	}
 
@@ -462,30 +462,30 @@ static ssize_t thermalthrottling_store(struct kobject *kobj, struct kobj_attribu
 	}
 
 	//ret = memx_fs_parse_cmd_and_exec(memx_dev, user_input_buf, user_input_buf_size);
-	//if (ret != 0) { pr_err("memx_proc_write: parse or exec fail!, err(%d)\n", ret); return ret; }
+	//if (ret != 0) { pr_err("memryx: memx_proc_write: parse or exec fail!, err(%d)\n", ret); return ret; }
 
 	input_parser_buffer_ptr = kstrdup(user_input_buf, GFP_KERNEL);
 	if (!input_parser_buffer_ptr) {
-		//pr_err("thermal_store: kstrdup fail!\n");
+		//pr_err("memryx: thermal_store: kstrdup fail!\n");
 		return ret;
 	}
 
 	if (strncmp(input_parser_buffer_ptr, "Enable", 6) == 0) {
-		pr_warn("memryx: Set thermal throttling: Enabled\n");
+		pr_err("memryx: Set thermal throttling Enable\n");
 		for (chip_id = 0; chip_id < memx_dev->mpu_data.hw_info.chip.total_chip_cnt; chip_id++) {
 			*((_VOLATILE_ u32 *)(MEMX_GET_CHIP_RMTCMD_PARAM_VIRTUAl_ADDR(memx_dev, chip_id)))   = 1;
 			*((_VOLATILE_ u32 *)(MEMX_GET_CHIP_RMTCMD_COMMAND_VIRTUAl_ADDR(memx_dev, chip_id))) = MXCNST_MEMXt_CMD;
 		}
 		memx_dev->ThermalThrottlingDisable = 0;
 	} else if (strncmp(input_parser_buffer_ptr, "Disable", 7) == 0) {
-		pr_warn("memryx: Set thermal throttling: Disabled\n");
+		pr_err("memryx: Set thermal throttling Disable\n");
 		for (chip_id = 0; chip_id < memx_dev->mpu_data.hw_info.chip.total_chip_cnt; chip_id++) {
 			*((_VOLATILE_ u32 *)(MEMX_GET_CHIP_RMTCMD_PARAM_VIRTUAl_ADDR(memx_dev, chip_id)))   = 0;
 			*((_VOLATILE_ u32 *)(MEMX_GET_CHIP_RMTCMD_COMMAND_VIRTUAl_ADDR(memx_dev, chip_id))) = MXCNST_MEMXt_CMD;
 		}
 		memx_dev->ThermalThrottlingDisable = 1;
 	} else {
-		pr_err("memryx: Unsupported cmd:  %s(Only \"Enable\" and \"Disable\" are valid)\n", input_parser_buffer_ptr);
+		pr_err("memryx: Not Support cmd:  %s(Only \"Enable\" and \"Disable\" are valid)\n", input_parser_buffer_ptr);
 	}
 
 	return user_input_buf_size;
@@ -521,11 +521,11 @@ s32 memx_fs_sys_init(struct memx_pcie_dev *memx_dev)
 		sprintf(name, "/sys/memx%d/cmd", minor);
 		fp = filp_open(name, O_RDONLY, 0);
 		if (IS_ERR(fp)) {
-			pr_info("register for %s\n", name);
+			pr_info("memryx: register for %s\n", name);
 			break;
 
 		} else {
-			//pr_err("file existed %p\n", fp);
+			//pr_err("memryx: file existed %p\n", fp);
 			filp_close(fp, NULL);
 		}
 	}
@@ -535,44 +535,44 @@ s32 memx_fs_sys_init(struct memx_pcie_dev *memx_dev)
 
 	memx_dev->fs.hif.sys.root_dir = kobject_create_and_add(root_dir_name, NULL);
 	if (!memx_dev->fs.hif.sys.root_dir) {
-		pr_err("memryx: memx_fs_sysfs init: create sys root_dir failed!\n");
+		pr_err("memryx: memx_fs_sysfs init: create sys root_dir failed\n");
 		return -ENOMEM;
 	}
 
 	if (sysfs_create_file(memx_dev->fs.hif.sys.root_dir, &g_memx_sysfs_attr.attr)) {
-		pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed!\n");
+		pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed\n");
 		return -ENOMEM;
 	}
 	if (memx_dev->fs.debug_en) {
 		if (sysfs_create_file(memx_dev->fs.hif.sys.root_dir, &g_memx_sysfs_debug_attr.attr)) {
-			pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed!\n");
+			pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed\n");
 			return -ENOMEM;
 		}
 		if (sysfs_create_file(memx_dev->fs.hif.sys.root_dir, &g_memx_sysfs_update_flash_attr.attr)) {
-			pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed!\n");
+			pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed\n");
 			return -ENOMEM;
 		}
 
 	}
 	if (sysfs_create_file(memx_dev->fs.hif.sys.root_dir, &g_memx_sysfs_verinfo_attr.attr)) {
-		pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed!\n");
+		pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed\n");
 		return -ENOMEM;
 	}
 	if (sysfs_create_file(memx_dev->fs.hif.sys.root_dir, &g_memx_sysfs_mpuuti_attr.attr)) {
-		pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed!\n");
+		pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed\n");
 		return -ENOMEM;
 	}
 	if (sysfs_create_file(memx_dev->fs.hif.sys.root_dir, &g_memx_sysfs_temper_attr.attr)) {
-		pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed!\n");
+		pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed\n");
 		return -ENOMEM;
 	}
 	if (memx_dev->fs.debug_en) {
 		if (sysfs_create_file(memx_dev->fs.hif.sys.root_dir, &g_memx_sysfs_thermalthrottling_attr.attr)) {
-			pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed!\n");
+			pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed\n");
 			return -ENOMEM;
 		}
 		if (sysfs_create_file(memx_dev->fs.hif.sys.root_dir, &g_memx_sysfs_throughput_attr.attr)) {
-			pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed!\n");
+			pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed\n");
 			return -ENOMEM;
 		}
 	}

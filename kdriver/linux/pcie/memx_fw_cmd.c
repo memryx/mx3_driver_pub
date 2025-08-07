@@ -11,7 +11,7 @@ static int memx_wait_for_firmware_msix_ack(struct memx_pcie_dev *memx_dev)
 	int fail_count = 0;
 
 	if (!memx_dev || !memx_dev->pDev) {
-		pr_err("memryx: wait_for_fw_ack: failed with -ENODEV!\n");
+		pr_err("memryx: wait_for_fw_ack: failed with -ENODEV\n");
 		return -ENODEV;
 	}
 	// check until received cmd process done msix
@@ -23,7 +23,7 @@ static int memx_wait_for_firmware_msix_ack(struct memx_pcie_dev *memx_dev)
 			return wq_status;
 		}
 		if (wq_status == -ERESTARTSYS) {
-			pr_warn("memryx: wait_for_fw_ack: cancelled by interrupt\n");
+			pr_err("memryx: wait_for_fw_ack: cancelled by interrupt\n");
 			return wq_status;
 		}
 		if (wq_status < 1) {
@@ -35,18 +35,18 @@ static int memx_wait_for_firmware_msix_ack(struct memx_pcie_dev *memx_dev)
 
 	if (wq_status >= 1) {
 #ifdef DEBUG
-		pr_info("wait_for_fw_ack: received ack notification from msix isr(%d)\n", memx_dev->mpu_data.fw_ctrl.indicator);
+		pr_info("memryx: wait_for_fw_ack: received ack notification from msix isr(%d)\n", memx_dev->mpu_data.fw_ctrl.indicator);
 #endif
 		spin_lock(&memx_dev->mpu_data.fw_ctrl.lock);
 		memx_dev->mpu_data.fw_ctrl.indicator = -1;
 		spin_unlock(&memx_dev->mpu_data.fw_ctrl.lock);
 #ifdef DEBUG
-		pr_info("wait_for_fw_ack:: success.\n");
+		pr_info("memryx: wait_for_fw_ack:: success.\n");
 #endif
 		return 0;
 
 	} else {
-		pr_err("memryx: wait_for_fw_ack: failed with wq_status(%d)\n", wq_status);
+		pr_err("memryx: wait_for_fw_ack: failed!\n");
 		return -ENODEV;
 	}
 }
@@ -57,7 +57,7 @@ static s32 memx_send_command_to_firmware(struct memx_pcie_dev *memx_dev, enum PC
 	u8 chip_idx = 0;
 
 	if (!memx_dev || !memx_dev->mpu_data.mmap_fw_cmd_buffer_base) {
-		pr_err("memryx: Invalid mmap_host_fw_command_event_base\n");
+		pr_err("memryx: invalid mmap_host_fw_command_event_base\n");
 		return -1;
 	}
 	if (op_code == PCIE_CMD_WAIT_FOR_ACK_ONLY)
@@ -97,7 +97,7 @@ static s32 memx_send_command_to_firmware(struct memx_pcie_dev *memx_dev, enum PC
 	// when fw write back to the same buffer in data area as event result, firmware will issue a msix to notify udriver the cmd process done.
 	memx_xflow_trigger_mpu_sw_irq(memx_dev, 0, fw_cmd_idx_4);
 #ifdef DEBUG
-	pr_info("send cmd[%u] with expected_len[%u] to fw\n", op_code, expected_payload_length);
+	pr_info("memryx: send cmd[%u] with expected_len[%u] to fw\n", op_code, expected_payload_length);
 #endif
 	return 0;
 }
@@ -107,7 +107,7 @@ static struct pcie_fw_cmd_format *memx_get_firmware_command_result(struct memx_p
 	struct pcie_fw_cmd_format *firmware_command_result_buffer = NULL;
 
 	if (!memx_dev || !memx_dev->mpu_data.mmap_fw_cmd_buffer_base) {
-		pr_err("memryx: Invalid context\n");
+		pr_err("memryx: invalid context\n");
 		return NULL;
 	}
 	firmware_command_result_buffer = (struct pcie_fw_cmd_format *)memx_dev->mpu_data.mmap_fw_cmd_buffer_base;
@@ -119,7 +119,7 @@ struct pcie_fw_cmd_format *memx_send_cmd_to_fw_and_get_result(struct memx_pcie_d
 	struct pcie_fw_cmd_format *firmware_command_result_buffer = NULL;
 
 	if (!memx_dev || !memx_dev->mpu_data.mmap_fw_cmd_buffer_base) {
-		pr_err("memryx: Invalid mmap_host_fw_command_event_base\n");
+		pr_err("memryx: invalid mmap_host_fw_command_event_base\n");
 		return NULL;
 	}
 	down(&g_memx_fw_cmd_mutex);

@@ -106,7 +106,7 @@ static s32 memx_proc_qspi_usage(struct seq_file *sfile, void *v)
 	};
 
 	if (memx_sram_read(memx_dev, MXCNST_RMTCMD_PARAM) == 1)
-		seq_printf(sfile, "Update QSPI FLASH PASS!! Verion:0x%08X DateCode:0x%08X (Please reboot to activate new fw)\n", firmware_buffer_pos[0x6F0C>>2], firmware_buffer_pos[0x6F10>>2]);
+		seq_printf(sfile, "Update QSPI FLASH PASS!! Verion:0x%08X DateCode:0x%08X (Please REBOOT to activate new fw)\n", firmware_buffer_pos[0x6F0C>>2], firmware_buffer_pos[0x6F10>>2]);
 	else
 		seq_puts(sfile, "Update QSPI FLASH FAILED!!\n");
 	seq_puts(sfile,	 "================================================================================================\n");
@@ -130,7 +130,7 @@ static s32 memx_proc_verinfo_usage(struct seq_file *sfile, void *v)
 	char chip_version[4] = "N/A";
 
 	seq_puts(sfile, "pcie intf device:\n");
-	seq_printf(sfile, "SDK version: %s\n", SDK_VERSION);
+	seq_printf(sfile, "SDK version: %s\n", SDK_RELEASE_VERSION);
 	seq_printf(sfile, "kdriver version: %s\n", PCIE_VERSION);
 	seq_printf(sfile, "FW_CommitID=0x%08x DateCode=0x%08x\n", memx_sram_read(memx_dev, MXCNST_COMMITID), memx_sram_read(memx_dev, MXCNST_DATECODE));
 	seq_printf(sfile, "ManufacturerID=0x%08x%08x\n", memx_sram_read(memx_dev, MXCNST_MANUFACTID2), memx_sram_read(memx_dev, MXCNST_MANUFACTID1));
@@ -374,21 +374,21 @@ ssize_t memx_proc_write_thermal(struct file *file, const char __user *user_input
 	}
 
 	if (strncmp(input_parser_buffer_ptr, "Enable", 6) == 0) {
-		pr_warn("memryx: Set thermal throttling: Enabled\n");
+		pr_err("memryx: set thermal throttling Enable\n");
 		for (chip_id = 0; chip_id < memx_dev->mpu_data.hw_info.chip.total_chip_cnt; chip_id++) {
 			*((_VOLATILE_ u32 *)(MEMX_GET_CHIP_RMTCMD_PARAM_VIRTUAl_ADDR(memx_dev, chip_id)))   = 1;
 			*((_VOLATILE_ u32 *)(MEMX_GET_CHIP_RMTCMD_COMMAND_VIRTUAl_ADDR(memx_dev, chip_id))) = MXCNST_MEMXt_CMD;
 		}
 		memx_dev->ThermalThrottlingDisable = 0;
 	} else if (strncmp(input_parser_buffer_ptr, "Disable", 7) == 0) {
-		pr_warn("memryx: Set thermal throttling: Disabled\n");
+		pr_err("memryx: set thermal throttling Disable\n");
 		for (chip_id = 0; chip_id < memx_dev->mpu_data.hw_info.chip.total_chip_cnt; chip_id++) {
 			*((_VOLATILE_ u32 *)(MEMX_GET_CHIP_RMTCMD_PARAM_VIRTUAl_ADDR(memx_dev, chip_id)))   = 0;
 			*((_VOLATILE_ u32 *)(MEMX_GET_CHIP_RMTCMD_COMMAND_VIRTUAl_ADDR(memx_dev, chip_id))) = MXCNST_MEMXt_CMD;
 		}
 		memx_dev->ThermalThrottlingDisable = 1;
 	} else {
-		pr_err("memryx: Unsupported cmd:  %s(Only \"Enable\" and \"Disable\" are valid)\n", input_parser_buffer_ptr);
+		pr_err("memryx: unsupported cmd:  %s(Only \"Enable\" and \"Disable\" are valid)\n", input_parser_buffer_ptr);
 	}
 
 	return user_input_buf_size;
@@ -528,11 +528,11 @@ s32 memx_fs_proc_init(struct memx_pcie_dev *memx_dev)
 		sprintf(name, "/proc/memx%d/cmd", minor);
 		fp = filp_open(name, O_RDONLY, 0);
 		if (IS_ERR(fp)) {
-			pr_info("register for %s\n", name);
+			pr_info("memryx: register for %s\n", name);
 			break;
 
 		} else {
-			//pr_err("file existed %p\n", fp);
+			//pr_err("memryx: file existed %p\n", fp);
 			filp_close(fp, NULL);
 		}
 	}

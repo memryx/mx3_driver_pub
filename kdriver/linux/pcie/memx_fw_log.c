@@ -13,28 +13,28 @@ s32 memx_fw_log_dump(struct memx_pcie_dev *memx_dev, u8 chip_id)
 	s32 total = 0, total_tmp = 0;
 
 	if (!memx_dev) {
-		pr_err("fw_log_dump: memx_dev is NULL\n");
+		pr_err("memryx: fw_log_dump: memx_dev is NULL\n");
 		return -EINVAL;
 	}
 
 	if (chip_id >= memx_dev->mpu_data.hw_info.chip.total_chip_cnt) {
-		pr_err("%s: invalid mpu chip id(%u), should be 0 to (%u - 1)\n", __func__, chip_id, memx_dev->mpu_data.hw_info.chip.total_chip_cnt);
+		pr_err("memryx: %s: invalid mpu chip id(%u), should be 0 to (%u - 1)\n", __func__, chip_id, memx_dev->mpu_data.hw_info.chip.total_chip_cnt);
 		return -EINVAL;
 	}
 
 	log_buf = (u8 *)(MEMX_GET_CHIP_DBGLOG_BUFFER_VIRTUAl_ADDR(memx_dev, chip_id));
 	if (!log_buf) {
-		pr_err("memx_fw_log_ctrl: Get chip_id(%u) log_buf virtual Address fail!\n", chip_id);
+		pr_err("memryx: memx_fw_log_ctrl: Get chip_id(%u) log_buf virtual Address fail!\n", chip_id);
 		return -EINVAL;
 	}
 	wp_addr = (u32 *)(MEMX_GET_CHIP_DBGLOG_WRITER_PTR_VIRTUAl_ADDR(memx_dev, chip_id));
 	if (!wp_addr) {
-		pr_err("memx_fw_log_ctrl: Get chip_id(%u) wp_addr virtual Address fail!\n", chip_id);
+		pr_err("memryx: memx_fw_log_ctrl: Get chip_id(%u) wp_addr virtual Address fail!\n", chip_id);
 		return -EINVAL;
 	}
 	rp_addr = (u32 *)(MEMX_GET_CHIP_DBGLOG_READ_PTR_VIRTUAl_ADDR(memx_dev, chip_id));
 	if (!rp_addr) {
-		pr_err("%s: Get chip_id(%u) rp_addr virtual Address fail!\n", __func__, chip_id);
+		pr_err("memryx: %s: Get chip_id(%u) rp_addr virtual Address fail!\n", __func__, chip_id);
 		return -EINVAL;
 	}
 
@@ -44,7 +44,7 @@ s32 memx_fw_log_dump(struct memx_pcie_dev *memx_dev, u8 chip_id)
 	total = (s32)((wp_value - rp_value) & (MEMX_DBGLOG_CHIP_BUFFER_SIZE(chip_id) - 1));
 	log_buf_seq = kmalloc(total+1, GFP_KERNEL);
 	if (!log_buf_seq) {
-		pr_err("kmalloc for log_buf_seq failed\n");
+		pr_err("memryx: kmalloc for log_buf_seq failed\n");
 		return -ENOMEM;
 	}
 
@@ -80,7 +80,7 @@ s32 memx_fw_log_init(struct memx_pcie_dev *memx_dev)
 	u8 chip_id = 0, maxcnt;
 
 	if (!memx_dev) {
-		pr_err("fw debug log init: memx_dev is NULL\n");
+		pr_err("memryx: fw debug log init: memx_dev is NULL\n");
 		return -EINVAL;
 	}
 
@@ -122,7 +122,7 @@ void memx_fw_log_deinit(struct memx_pcie_dev *memx_dev)
 	u8 chip_id = 0, maxcnt;
 
 	if (!memx_dev) {
-		pr_err("memx_proc_deinit: memx_dev is NULL\n");
+		pr_err("memryx: memx_proc_deinit: memx_dev is NULL\n");
 		return;
 	}
 

@@ -65,6 +65,7 @@ enum memx_group_ids {
 
 struct control {
 	u32 is_abort;
+	u32 is_read_abort;
 	spinlock_t lock;
 	// -1 means no data need to process, otherwise the value represent chip_idx(i.e range 0 ~ 31) means some chip output flow data need to process
 	s32 indicator;

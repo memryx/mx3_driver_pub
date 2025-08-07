@@ -1,25 +1,27 @@
 /***************************************************************************//**
- * @note
- * Copyright (c) 2019-2025 MemryX Inc.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included
- * in all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
- * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
- * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
- * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
- *
+
+ Copyright (c) 2019-2025 MemryX Inc.
+
+ MIT License
+
+ Permission is hereby granted, free of charge, to any person obtaining a
+ copy of this software and associated documentation files (the "Software"),
+ to deal in the Software without restriction, including without limitation
+ the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ and/or sell copies of the Software, and to permit persons to whom the
+ Software is furnished to do so, subject to the following conditions:
+
+ The above copyright notice and this permission notice shall be included
+ in all copies or substantial portions of the Software.
+
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+ IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
  ******************************************************************************/
 
 /***************************************************************************//**
@@ -35,6 +37,7 @@
 #include <numpy/ndarraytypes.h>
 
 // wraps all constants and functions within 'memx.h' to python
+//#include "../udriver/include/common/memx.h"
 #include <memx/memx.h>
 
 // has all the gbf convert stuff
@@ -48,10 +51,13 @@ const int _wrap_memx_fmap_format_raw = MEMX_FMAP_FORMAT_RAW;
 const int _wrap_memx_fmap_format_gbf80 = MEMX_FMAP_FORMAT_GBF80;
 
 const int _wrap_memx_download_type_from_buffer = MEMX_DOWNLOAD_TYPE_FROM_BUFFER;
+const int _wrap_memx_download_type_wtmem_legacy = MEMX_DOWNLOAD_TYPE_WTMEM_LEGACY;
 const int _wrap_memx_download_type_wtmem = MEMX_DOWNLOAD_TYPE_WTMEM;
 const int _wrap_memx_download_type_model = MEMX_DOWNLOAD_TYPE_MODEL;
 const int _wrap_memx_download_type_wtmem_and_model = MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL;
 const int _wrap_memx_download_type_wtmem_and_model_buffer = MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL_BUFFER;
+const int _wrap_memx_download_type_wtmem_and_model_legacy = MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL_LEGACY;
+const int _wrap_memx_download_type_wtmem_and_model_buffer_legacy = MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL_BUFFER_LEGACY;
 
 const int _wrap_memx_model_max_number = MEMX_MODEL_MAX_NUMBER;
 const int _wrap_memx_device_group_max_number = MEMX_DEVICE_GROUP_MAX_NUMBER;
@@ -173,6 +179,26 @@ static PyObject* _wrap_memx_close(PyObject* self, PyObject* args)
   {
     Py_BEGIN_ALLOW_THREADS
     status = memx_close(model_id);
+    Py_END_ALLOW_THREADS
+  }
+
+  unused(args);
+  unused(self);
+  return Py_BuildValue("i", status);
+}
+
+static PyObject* _wrap_memx_abort(PyObject* self, PyObject* args)
+{
+  memx_status status;
+  uint8_t model_id;
+
+  if(!PyArg_ParseTuple(args, "b", &model_id)) {
+    PyErr_BadArgument();
+    return NULL;
+  }
+  {
+    Py_BEGIN_ALLOW_THREADS
+    status = memx_set_abort_read(model_id);
     Py_END_ALLOW_THREADS
   }
 
@@ -623,6 +649,31 @@ static PyObject* _wrap_memx_get_module_info(PyObject* self, PyObject* args)
   }
 }
 
+static PyObject* _wrap_memx_get_interface_info(PyObject* self, PyObject* args)
+{
+  memx_status status;
+  uint8_t group_id;
+  uint64_t value;
+
+  if(!PyArg_ParseTuple(args, "B", &group_id)) {
+    PyErr_BadArgument();
+    return NULL;
+  }
+  {
+    Py_BEGIN_ALLOW_THREADS
+    status = memx_get_feature(group_id, 0, OPCODE_GET_INTERFACE_INFO, &value);
+    Py_END_ALLOW_THREADS
+  }
+
+  unused(self);
+  if(status) {
+    // non-zero error
+    return Py_BuildValue("K", status);
+  } else {
+    return Py_BuildValue("K", value);
+  }
+}
+
 static PyObject* _wrap_memx_set_frequency(PyObject* self, PyObject* args)
 {
   memx_status status = MEMX_STATUS_OK;
@@ -821,7 +872,7 @@ static PyObject* _wrap_memx_download_model(PyObject* self, PyObject* args)
   uint8_t model_id;
   const char* file_path;
   uint8_t model_idx = 0;
-  int type = 3;
+  int type = MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL;
 
   if(!PyArg_ParseTuple(args, "bs|bi", &model_id, &file_path, &model_idx, &type)) {
     PyErr_BadArgument();
@@ -836,6 +887,30 @@ static PyObject* _wrap_memx_download_model(PyObject* self, PyObject* args)
   unused(self);
   return Py_BuildValue("i", status);
 }
+
+static PyObject* _wrap_memx_download_model_buffer(PyObject* self, PyObject* args)
+{
+  memx_status status;
+  uint8_t model_id;
+  PyBytesObject* bytes_array;
+  int type = MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL_BUFFER;
+
+  if(!PyArg_ParseTuple(args, "bO!", &model_id, &PyBytes_Type, &bytes_array)) {
+    PyErr_BadArgument();
+    return NULL;
+  }
+  {
+    Py_INCREF(bytes_array);
+    Py_BEGIN_ALLOW_THREADS
+    status = memx_download_model(model_id, (const char*)PyBytes_AS_STRING(bytes_array), 0, type);
+    Py_END_ALLOW_THREADS
+    Py_DECREF(bytes_array);
+  }
+
+  unused(self);
+  return Py_BuildValue("i", status);
+}
+
 
 static PyObject* _wrap_memx_download_firmware(PyObject* self, PyObject* args)
 {
@@ -1090,11 +1165,11 @@ static PyObject* _wrap_memx_stream_ifmap(PyObject* self, PyObject* args, PyObjec
             int fmt_size = tensor_size * 2;
             if(tensor_size % 2)
                 fmt_size += 2;
-            formatted_data = malloc(fmt_size);
-            memset(formatted_data, 0, fmt_size);
 
             Py_INCREF(ifmap);
             Py_BEGIN_ALLOW_THREADS
+            formatted_data = malloc(fmt_size);
+            memset(formatted_data, 0, fmt_size);
             convert_bf16( (void*)PyArray_DATA(ifmap), formatted_data, tensor_size );
 
             // send
@@ -1111,11 +1186,13 @@ static PyObject* _wrap_memx_stream_ifmap(PyObject* self, PyObject* args, PyObjec
             int num_xyz_pixels = (tensor_size / num_ch);
             int num_gbf_per_pixel = (num_ch / 8) + ( ((num_ch%8)!=0) ? 1 : 0);
             int fmt_size = num_xyz_pixels * num_gbf_per_pixel * 10;
-            formatted_data = malloc(fmt_size);
-            memset(formatted_data, 0, fmt_size);
+            fmt_size += (4 - (fmt_size % 4));
 
             Py_INCREF(ifmap);
             Py_BEGIN_ALLOW_THREADS
+            
+            formatted_data = malloc(fmt_size);
+            memset(formatted_data, 0, fmt_size);
             convert_gbf( (void*)PyArray_DATA(ifmap), formatted_data, tensor_size, num_ch );
 
             // send
@@ -1131,11 +1208,10 @@ static PyObject* _wrap_memx_stream_ifmap(PyObject* self, PyObject* args, PyObjec
             // GBF row pad alloc
             int num_gbf_per_pixel = (num_ch / 8) + ( ((num_ch%8)!=0) ? 1 : 0);
             int fmt_size = height*((width * z * num_gbf_per_pixel * 10 + 3) &~0x3);
-            formatted_data = malloc(fmt_size);
-            memset(formatted_data, 0, fmt_size);
-
             Py_INCREF(ifmap);
             Py_BEGIN_ALLOW_THREADS
+            formatted_data = malloc(fmt_size);
+            memset(formatted_data, 0, fmt_size);
             convert_gbf_row_pad( (void*)PyArray_DATA(ifmap), formatted_data, height, width, z, num_ch);
 
             // send
@@ -1244,12 +1320,14 @@ static PyObject* _wrap_memx_stream_ofmap(PyObject* self, PyObject* args, PyObjec
             int num_xyz_pixels = (tensor_size / num_ch);
             int num_gbf_per_pixel = (num_gbf_ch/8) + (((num_gbf_ch%8)!=0) ? 1 : 0);
             int fmt_size = num_xyz_pixels * num_gbf_per_pixel * 10;
-            formatted_data = malloc(fmt_size);
-            memset(formatted_data, 0, fmt_size);
+            fmt_size += (4 - (fmt_size % 4));
 
             // recv
             Py_INCREF(ofmap);
             Py_BEGIN_ALLOW_THREADS
+            
+            formatted_data = malloc(fmt_size);
+            memset(formatted_data, 0, fmt_size);
             status = memx_stream_ofmap(model_id, flow_id, formatted_data, timeout);
 
             // GBF unconvert
@@ -1425,6 +1503,102 @@ static PyObject* _wrap_memx_exit_device_deep_sleep(PyObject* self, PyObject* arg
   return Py_BuildValue("i", status);
 }
 
+static PyObject* _wrap_memx_set_ifmap_control(PyObject* self, PyObject* args)
+{
+  memx_status status = MEMX_STATUS_OK;
+  uint16_t value = 0;
+  uint8_t group_id = 0;
+  uint8_t chip_id = 0;
+
+  if(!PyArg_ParseTuple(args, "bbh", &group_id, &chip_id, &value)) {
+    PyErr_BadArgument();
+    return NULL;
+  }
+  {
+    Py_BEGIN_ALLOW_THREADS
+    status = memx_set_feature(group_id, chip_id, OPCODE_SET_IFMAP_CONTROL, value);
+    Py_END_ALLOW_THREADS
+  }
+
+  unused(self);
+  return Py_BuildValue("K", status);
+}
+
+static PyObject* _wrap_memx_get_ifmap_control(PyObject* self, PyObject* args)
+{
+  memx_status status;
+  uint8_t group_id;
+  uint64_t value;
+
+  if(!PyArg_ParseTuple(args, "B", &group_id)) {
+    PyErr_BadArgument();
+    return NULL;
+  }
+  {
+    Py_BEGIN_ALLOW_THREADS
+    status = memx_get_feature(group_id, 0, OPCODE_GET_IFMAP_CONTROL, &value);
+    Py_END_ALLOW_THREADS
+  }
+
+  unused(self);
+  if(status) {
+    // non-zero error
+    return Py_BuildValue("K", status);
+  } else {
+    return Py_BuildValue("K", value);
+  }
+}
+
+static PyObject* _wrap_memx_get_total_chip_count(PyObject* self, PyObject* args)
+{
+  memx_status status;
+  uint8_t group_id;
+  uint64_t value;
+  uint16_t chip_count = 0;
+
+  if(!PyArg_ParseTuple(args, "B", &group_id)) {
+    PyErr_BadArgument();
+    return NULL;
+  }
+  {
+    Py_BEGIN_ALLOW_THREADS
+    status = memx_get_feature(group_id, 0, OPCODE_GET_HW_INFO, &value);
+    Py_END_ALLOW_THREADS
+  }
+
+  unused(self);
+  if(status) {
+    // non-zero error
+    return Py_BuildValue("K", status);
+  } else {
+    chip_count = (uint16_t)((value >> 16) & 0xFF);
+    return Py_BuildValue("K", chip_count);
+  }
+}
+
+static PyObject* _wrap_memx_get_device_count(PyObject* self, PyObject* args)
+{
+  memx_status status;
+  uint32_t device_count = 0;
+  uint64_t value = 0;
+  unused(self);
+  unused(args);
+
+  {
+    Py_BEGIN_ALLOW_THREADS
+    status = memx_operation_get_device_count(&value);
+    Py_END_ALLOW_THREADS
+  }
+
+  if(status) {
+    // non-zero error
+    return Py_BuildValue("K", status);
+  } else {
+    device_count = (uint32_t)((value) & 0xFF);
+    return Py_BuildValue("K", device_count);
+  }
+}
+
 /***************************************************************************//**
  * module method
  ******************************************************************************/
@@ -1435,12 +1609,14 @@ static PyMethodDef MemxMethods[] = {
   {"unlock", (PyCFunction)_wrap_memx_unlock, METH_VARARGS, NULL},
   {"open", (PyCFunction)_wrap_memx_open, METH_VARARGS, NULL},
   {"close", (PyCFunction)_wrap_memx_close, METH_VARARGS, NULL},
+  {"abort", (PyCFunction)_wrap_memx_abort, METH_VARARGS, NULL},
   {"operation", (PyCFunction)_wrap_memx_operation, METH_VARARGS, NULL},
   {"chip_count", (PyCFunction)_wrap_memx_chip_count, METH_VARARGS, NULL},
   {"config_mpu_group", (PyCFunction)_wrap_memx_config_mpu_group, METH_VARARGS, NULL},
   {"download_model_config", (PyCFunction)_wrap_memx_download_model_config, METH_VARARGS, NULL},
   {"download_model_wtmem", (PyCFunction)_wrap_memx_download_model_wtmem, METH_VARARGS, NULL},
   {"download", (PyCFunction)_wrap_memx_download_model, METH_VARARGS, NULL},
+  {"download_buffer", (PyCFunction)_wrap_memx_download_model_buffer, METH_VARARGS, NULL},
   {"update_firmware", (PyCFunction)_wrap_memx_download_firmware, METH_VARARGS, NULL},
   {"set_stream_enable", (PyCFunction)_wrap_memx_set_stream_enable, METH_VARARGS, NULL},
   {"set_stream_disable", (PyCFunction)_wrap_memx_set_stream_disable, METH_VARARGS, NULL},
@@ -1470,6 +1646,7 @@ static PyMethodDef MemxMethods[] = {
   {"get_power", (PyCFunction)_wrap_memx_get_power, METH_VARARGS|METH_KEYWORDS, NULL},
   {"get_poweralert", (PyCFunction)_wrap_memx_get_poweralert, METH_VARARGS|METH_KEYWORDS, NULL},
   {"get_module_info", (PyCFunction)_wrap_memx_get_module_info, METH_VARARGS|METH_KEYWORDS, NULL},
+  {"get_interface_info", (PyCFunction)_wrap_memx_get_interface_info, METH_VARARGS|METH_KEYWORDS, NULL},
   {"set_mpu_frequency", (PyCFunction)_wrap_memx_set_frequency, METH_VARARGS, NULL},
   {"set_mpu_voltage", (PyCFunction)_wrap_memx_set_voltage, METH_VARARGS, NULL},
   {"set_mpu_thermal_threshold", (PyCFunction)_wrap_memx_set_thermal_threshold, METH_VARARGS, NULL},
@@ -1478,6 +1655,10 @@ static PyMethodDef MemxMethods[] = {
   {"set_power_alert_frequency", (PyCFunction)_wrap_memx_set_power_alert_frequency, METH_VARARGS, NULL},
   {"enter_device_deep_sleep", (PyCFunction)_wrap_memx_enter_device_deep_sleep, METH_VARARGS, NULL},
   {"exit_device_deep_sleep", (PyCFunction)_wrap_memx_exit_device_deep_sleep, METH_VARARGS, NULL},
+  {"set_ifmap_control", (PyCFunction)_wrap_memx_set_ifmap_control, METH_VARARGS, NULL},
+  {"get_ifmap_control", (PyCFunction)_wrap_memx_get_ifmap_control, METH_VARARGS|METH_KEYWORDS, NULL},
+  {"get_total_chip_count", (PyCFunction)_wrap_memx_get_total_chip_count, METH_VARARGS|METH_KEYWORDS, NULL},
+  {"get_device_count", (PyCFunction)_wrap_memx_get_device_count, METH_VARARGS|METH_KEYWORDS, NULL},
 
   {NULL, NULL, 0, NULL} // Sentinel
 };
@@ -1514,6 +1695,8 @@ PyInit_mxa(void)
   PyModule_AddIntConstant(module, "download_type_model", _wrap_memx_download_type_model);
   PyModule_AddIntConstant(module, "download_type_wtmem_and_model", _wrap_memx_download_type_wtmem_and_model);
   PyModule_AddIntConstant(module, "download_type_wtmem_and_model_buffer", _wrap_memx_download_type_wtmem_and_model_buffer);
+  PyModule_AddIntConstant(module, "download_type_wtmem_and_model_legacy", _wrap_memx_download_type_wtmem_and_model_legacy);
+  PyModule_AddIntConstant(module, "download_type_wtmem_and_model_buffer_legacy", _wrap_memx_download_type_wtmem_and_model_buffer_legacy);
 
   PyModule_AddIntConstant(module, "max_model_id", _wrap_memx_model_max_number);
   PyModule_AddIntConstant(module, "max_group_id", _wrap_memx_device_group_max_number);

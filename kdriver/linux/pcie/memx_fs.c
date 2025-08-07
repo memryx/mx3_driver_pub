@@ -71,10 +71,10 @@ s32 memx_fs_cmd_handler(struct memx_pcie_dev *memx_dev, u8 argc, char **argv)
 		s32 ret = memx_fw_log_dump(memx_dev, chip_id);
 
 		if (ret) {
-			pr_err("memryx: fs_cmd_handler: attempt to dump chip_id(%u)'s fw_log failed(%d)\n", chip_id, ret);
+			pr_err("memryx: fs_cmd_handler: try to dump chip_id(%u)'s fw_log failed(%d)\n", chip_id, ret);
 			return ret;
 		}
-		pr_info("memryx: fs_cmd_handler: dump of chip_id(%u)'s fw_log was successful\n", chip_id);
+		pr_info("memryx: fs_cmd_handler: dump of chip_id(%u)'s fw_log success\n", chip_id);
 	} break;
 	case FS_CMD_READ_ARGC: {
 		*((_VOLATILE_ u32 *)(MEMX_GET_CHIP_RMTCMD_PARAM_VIRTUAl_ADDR(memx_dev, chip_id))) = reg_addr;
@@ -108,7 +108,7 @@ s32 memx_fs_cmd_handler(struct memx_pcie_dev *memx_dev, u8 argc, char **argv)
 	} break;
 
 	default: {
-		pr_err("memryx: fs_cmd_handler: expected argc[2-4] but got (%u)\n", argc);
+		pr_err("memryx: fs_cmd_handler: expected argc[2-4] but (%u)\n", argc);
 		return -EINVAL;
 	}
 	}
@@ -129,13 +129,13 @@ s32 memx_fs_parse_cmd_and_exec(struct memx_pcie_dev *memx_dev, const char __user
 	if (memx_dev->fs.type == MEMX_FS_HIF_SYS) {
 		input_parser_buffer_ptr = kstrdup(user_input_buf, GFP_KERNEL);
 		if (!input_parser_buffer_ptr) {
-			//pr_err("memx_fs_parser: kstrdup fail!\n");
+			//pr_err("memryx: memx_fs_parser: kstrdup fail!\n");
 			return ret;
 		}
 	} else {
 		input_parser_buffer_ptr = memdup_user_nul(user_input_buf, user_input_buf_size);
 		if (IS_ERR(input_parser_buffer_ptr)) {
-			pr_err("memryx: memx_fs_parser: memdup_user_nul failed!\n");
+			pr_err("memryx: memx_fs_parser: memdup_user_nul fail!\n");
 			return PTR_ERR(input_parser_buffer_ptr);
 		}
 	}
@@ -145,7 +145,7 @@ s32 memx_fs_parse_cmd_and_exec(struct memx_pcie_dev *memx_dev, const char __user
 		argv[argc++] = found;
 
 	if (argc < FS_CMD_FWLOG_ARGC) {
-		pr_err("memryx: memx_fs_parser: argc should be in range 2-4 but is (%u)\n", argc);
+		pr_err("memryx: memx_fs_parser: argc should be te range in 2-4 but (%u)\n", argc);
 		return ret;
 	}
 
@@ -172,7 +172,7 @@ u32 memx_crc32(const uint8_t *data, size_t length)
 
 	crc32_table = vmalloc(256 * sizeof(u32));
 	if (crc32_table == NULL) {
-		//pr_err("%s: malloc crc32_table failed.\n", __func__);
+		//pr_err("memryx: %s: malloc crc32_table failed.\n", __func__);
 		return 0;
 	}
 
@@ -215,7 +215,7 @@ s32 memx_fs_init(struct memx_pcie_dev *memx_dev)
 		ret = memx_fs_sys_init(memx_dev);
 	} break;
 	default:
-		pr_err("memryx: %s: unsupported filesystem type(%u)\n", __func__, memx_dev->fs.type);
+		pr_err("memryx: %s: non support file system type(%u)\n", __func__, memx_dev->fs.type);
 		return ret;
 	}
 
@@ -240,7 +240,7 @@ void memx_fs_deinit(struct memx_pcie_dev *memx_dev)
 		memx_fs_sys_deinit(memx_dev);
 	} break;
 	default:
-		pr_err("memryx: %s: unsupported filesystem type(%u)\n", __func__, memx_dev->fs.type);
+		pr_err("memryx: %s: non support file system type(%u)\n", __func__, memx_dev->fs.type);
 	}
 
 	memx_fs_hwmon_deinit(memx_dev);
