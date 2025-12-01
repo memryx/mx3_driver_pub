@@ -9,10 +9,10 @@
 #include "memx_msix_irq.h"
 #include "memx_mpu.h"
 #include "memx_fs.h"
+#include "memx_xflow.h"
 
-
-#define PCIE_VERSION "1.2.40"
-#define SDK_RELEASE_VERSION "2.0"
+#define PCIE_VERSION "1.3.4"
+#define SDK_RELEASE_VERSION "2.1"
 
 #define PCIE_NAME "memx_pcie_ai_chip"
 
@@ -31,34 +31,40 @@
 #define MEMX_PCIE_BAR0_MMAP_SIZE_64MB  (0x4000000)
 #define MEMX_PCIE_BAR0_MMAP_SIZE_16MB  (0x1000000)
 #define MEMX_PCIE_BAR1_MMAP_SIZE_1MB   (0x100000)
+#define MEMX_PCIE_BAR0_MMAP_SIZE_512KB (0x80000)
+#define MEMX_PCIE_BAR0_MMAP_SIZE_256KB (0x40000)
+#define MEMX_PCIE_BAR0_MMAP_SIZE_4KB   (0x1000)
 
-#define MXCNST_RWACCESS				(0666)
-#define MXCNST_FW_START_BASE		(0x40040000)
-#define MXCNST_FW_ZSBL_INITVAL		(0x4D4D4D4D)
-#define MXCNST_PCIE_LOCINTR			(0x2110020C)
-#define MXCNST_CQDATA0_ADDR			(0x40046f70)
-#define MXCNST_MEMXR_CMD			(0x6d656d72)
-#define MXCNST_MEMXW_CMD			(0x6d656d77)
-#define MXCNST_MEMX0_CMD			(0x6d656d30)
-#define MXCNST_MEMXQ_CMD			(0x6D656D51)
-#define MXCNST_MEMXt_CMD			(0x6d656d74)
-#define MXCNST_HANDSHAKE_MAGIC		(0xABCDEFA9)
-#define MXCNST_TEMP_BASE			(0x40046d40)
-#define MXCNST_DATASRAM_BASE		(0x40080000)
-#define MXCNST_MPUUTIL_BASE			(0x40046d00)
-#define MXCNST_FW_TYPE_OFS			(0x40046FF4)
-#define MXCNST_IMG_TYPE_OFS			(0x00006FF8)
-#define MXCNST_RMTCMD_PARAM			(0x40046F48)
-#define MXCNST_RMTCMD_COMMD			(0x40046F44)
-#define MXCNST_COLDRSTCNT_ADDR		(0x400fdf40)
-#define MXCNST_WARMRSTCNT_ADDR		(0x400fdf44)
-#define MXCNST_MANUFACTID1			(0x40046f58)
-#define MXCNST_MANUFACTID2			(0x40046f5c)
-#define MXCNST_COMMITID				(0x40046f08)
-#define MXCNST_DATECODE				(0x40046f0c)
-#define MXCNST_BOOT_MODE			(0x20000100)
-#define MXCNST_CHIP_VERSION			(0x20000500)
-#define MXCNST_FW_SYS_TICK			(0x40046f14)
+#define MXCNST_RWACCESS        (0666)
+#define MXCNST_FW_START_BASE   (0x40040000)
+#define MXCNST_FW_ZSBL_INITVAL (0x4D4D4D4D)
+#define MXCNST_PCIE_LOCINTR    (0x2110020C)
+#define MXCNST_CQDATA0_ADDR    (0x40046f70)
+#define MXCNST_MEMXR_CMD       (0x6d656d72)
+#define MXCNST_MEMXW_CMD       (0x6d656d77)
+#define MXCNST_MEMX0_CMD       (0x6d656d30)
+#define MXCNST_MEMXQ_CMD       (0x6D656D51)
+#define MXCNST_MEMXt_CMD       (0x6d656d74)
+#define MXCNST_HANDSHAKE_MAGIC (0xABCDEFA9)
+#define MXCNST_TEMP_BASE       (0x40046d40)
+#define MXCNST_DATASRAM_BASE   (0x40080000)
+#define MXCNST_MPUUTIL_BASE    (0x40046d00)
+#define MXCNST_FW_TYPE_OFS     (0x40046FF4)
+#define MXCNST_IMG_TYPE_OFS    (0x00006FF8)
+#define MXCNST_RMTCMD_PARAM    (0x40046F48)
+#define MXCNST_RMTCMD_COMMD    (0x40046F44)
+#define MXCNST_COLDRSTCNT_ADDR (0x400fdf40)
+#define MXCNST_WARMRSTCNT_ADDR (0x400fdf44)
+#define MXCNST_MANUFACTID1     (0x40046f58)
+#define MXCNST_MANUFACTID2     (0x40046f5c)
+#define MXCNST_COMMITID        (0x40046f08)
+#define MXCNST_DATECODE        (0x40046f0c)
+#define MXCNST_BOOT_MODE       (0x20000100)
+#define MXCNST_CHIP_VERSION    (0x20000500)
+#define MXCNST_FW_SYS_TICK     (0x40046f14)
+#define MXCNST_RP_XFLOW_ADDR   (0x60000000)
+
+#define MEMX_PCIE_IRQ_OFFSET(C, I) ((((15 - (C)) * DEVICE_IRQ_COUNT) + (I)) * 4 + 0x200)
 
 enum memx_bar_id {
 	BAR0 = 0,
@@ -66,6 +72,7 @@ enum memx_bar_id {
 	BAR2,
 	BAR3,
 	BAR4,
+	BAR5,
 
 	MAX_BAR
 };
@@ -119,6 +126,8 @@ struct memx_pcie_dev {
 	u32 major_index;
 	u32 minor_index;
 	u32 ThermalThrottlingDisable;
+	u32 gpio_r;
+	u32 msix;
 
 	struct memx_bar bar_info[MAX_BAR];
 	struct memx_interrupt int_info;
@@ -134,6 +143,7 @@ struct memx_pcie_dev {
 	enum memx_bar_id xflow_conf_bar_idx;
 	enum memx_bar_id xflow_vbuf_bar_idx;
 	enum memx_bar_id sram_bar_idx;
+	enum memx_bar_id device_irq_bar_idx;
 	u32 xflow_conf_bar_offset;
 	u32 xflow_vbuf_bar_offset;
 	struct cdev char_cdev;
@@ -148,5 +158,7 @@ extern u32 rx_time_us;
 extern u32 tx_size;
 extern u32 rx_size;
 extern struct memx_throughput_info udrv_throughput_info;
+
+void memx_pcie_trigger_device_irq(struct memx_pcie_dev *memx_dev, u8 chip_id, enum xflow_mpu_sw_irq_idx sw_irq_idx);
 
 #endif

@@ -17,8 +17,8 @@
 
 #define MEMX_GET_CHIP_ADMIN_CMD_BASE_VIRTUAL_ADDR(memx_dev, chip_id) (((memx_dev)->mpu_data.rx_dma_coherent_buffer_virtual_base) + \
 																		MEMX_ADMCMD_VIRTUAL_OFFSET + ((chip_id) * MEMX_ADMCMD_SIZE))
-
-static void memx_admin_trigger(struct memx_pcie_dev *memx_dev, uint8_t chip_id, struct transport_cmd *pCmd)
+void memx_admin_trigger(struct memx_pcie_dev *memx_dev, uint8_t chip_id, struct transport_cmd *pCmd);
+void memx_admin_trigger(struct memx_pcie_dev *memx_dev, uint8_t chip_id, struct transport_cmd *pCmd)
 {
 	uint32_t *cmd =  (uint32_t *) (MEMX_GET_CHIP_ADMIN_CMD_BASE_VIRTUAL_ADDR(memx_dev, chip_id));
 	memcpy((void *)cmd, pCmd, sizeof(struct transport_cmd));
@@ -31,6 +31,7 @@ static void memx_admin_data_from_device(struct memx_pcie_dev *memx_dev, uint8_t 
 	uint32_t index = 0;
 	uint8_t read_data_start = 0;
 	uint8_t read_data_end = 0;
+	uint32_t read_offset = U32_ADMCMD_CQ_DATA_OFFSET;
 
 	if (cmd->SQ.subOpCode == FID_DEVICE_THROUGHPUT && cmd->SQ.opCode == MEMX_ADMIN_CMD_GET_FEATURE) {
 		read_data_start = (chip_id == CHIP_ID0) ? THROUGHPUT_DATA_BEGIN_CHIP_0 : THROUGHPUT_DATA_BEGIN_CHIP_LAST;
@@ -39,15 +40,18 @@ static void memx_admin_data_from_device(struct memx_pcie_dev *memx_dev, uint8_t 
 		read_data_start = DATA_BEGIN_CHIP_0;
 		read_data_end = DATA_END_CHIP_0;
 	}
+	
+	if (cmd->SQ.subOpCode == FID_DEVICE_I2C_TRANSCEIVE)
+		read_offset = 0;
 
 	dma_sync_single_for_cpu(&memx_dev->pDev->dev, (dma_addr_t)(memx_dev->mpu_data.hw_info.fw.rx_dma_coherent_buffer_base + MEMX_ADMCMD_VIRTUAL_PAGE_OFFSET), MEMX_ADMCMD_VIRTUAL_PAGE_SIZE, DMA_BIDIRECTIONAL);
 	for (index = read_data_start; index < read_data_end; index++) {
 		uint32_t *AdminCmd =  (uint32_t *) (MEMX_GET_CHIP_ADMIN_CMD_BASE_VIRTUAL_ADDR(memx_dev, chip_id));
-		cmd->CQ.data[index] = AdminCmd[U32_ADMCMD_CQ_DATA_OFFSET + index];
+		cmd->CQ.data[index] = AdminCmd[read_offset + index];
 	}
 }
-
-static enum CASCADE_PLUS_ADMINCMD_ERROR_STATUS memx_admin_fetch_result(struct memx_pcie_dev *memx_dev, uint8_t chip_id, struct transport_cmd *cmd)
+enum CASCADE_PLUS_ADMINCMD_ERROR_STATUS memx_admin_fetch_result(struct memx_pcie_dev *memx_dev, uint8_t chip_id, struct transport_cmd *cmd);
+enum CASCADE_PLUS_ADMINCMD_ERROR_STATUS memx_admin_fetch_result(struct memx_pcie_dev *memx_dev, uint8_t chip_id, struct transport_cmd *cmd)
 {
 	enum CASCADE_PLUS_ADMINCMD_STATUS device_status = STATUS_IDLE;
 	enum CASCADE_PLUS_ADMINCMD_ERROR_STATUS error_status = ERROR_STATUS_NO_ERROR;
@@ -103,7 +107,7 @@ static long _admin_get_feature(struct memx_pcie_dev *memx_dev, struct transport_
 		udrv_throughput_info.stream_write_kb = 0;
 		udrv_throughput_info.stream_read_us = 0;
 		udrv_throughput_info.stream_read_kb = 0;
-	} else if(pCmd->SQ.subOpCode == FID_DEVICE_INTERFACE_INFO) {
+	} else if (pCmd->SQ.subOpCode == FID_DEVICE_INTERFACE_INFO) {
 		int offset = pci_find_capability(memx_dev->pDev, PCI_CAP_ID_EXP);
 		if (offset == 0) {
 			pr_err("memryx: failed to find capability\n");
@@ -112,20 +116,24 @@ static long _admin_get_feature(struct memx_pcie_dev *memx_dev, struct transport_
 			pci_read_config_dword(memx_dev->pDev, offset + PCI_EXP_LNKCAP, &pCmd->CQ.data[0]);
 			pci_read_config_word(memx_dev->pDev, offset + PCI_EXP_LNKSTA, (u16*)&pCmd->CQ.data[1]);
 		}
-	} else if ((pCmd->SQ.subOpCode == FID_DEVICE_POWERMANAGEMENT) || (pCmd->SQ.subOpCode == FID_DEVICE_FREQUENCY)) {
+	} else if ((pCmd->SQ.subOpCode == FID_DEVICE_POWERMANAGEMENT) || (pCmd->SQ.subOpCode == FID_DEVICE_FREQUENCY) || (pCmd->SQ.subOpCode == FID_DEVICE_GPIO)) {
 		uint8_t chip_id = pCmd->SQ.cdw2;
 
-		if ((chip_id < MAX_CHIP_NUM) && (memx_dev->mpu_data.hw_info.chip.roles[chip_id] != ROLE_UNCONFIGURED)) {
+		if (chip_id < memx_dev->mpu_data.hw_info.chip.total_chip_cnt) {
 			memx_admin_trigger(memx_dev, chip_id, pCmd);
 			pCmd->CQ.status = memx_admin_fetch_result(memx_dev, chip_id, pCmd);
 		} else {
 			pCmd->CQ.status = ERROR_STATUS_PARAMETER_FAIL;
 		}
-	} else if(pCmd->SQ.subOpCode == FID_DEVICE_HW_INFO) {
+	} else if (pCmd->SQ.subOpCode == FID_DEVICE_HW_INFO) {
 		pCmd->CQ.data[0] = memx_dev->mpu_data.hw_info.chip.generation;
 		pCmd->CQ.data[1] = memx_dev->mpu_data.hw_info.chip.total_chip_cnt;
 		pCmd->CQ.data[2] = memx_dev->mpu_data.hw_info.chip.curr_config_chip_count;
 		pCmd->CQ.data[3] = memx_dev->mpu_data.hw_info.chip.group_count;
+		pCmd->CQ.status = ERROR_STATUS_NO_ERROR;
+	} else if (pCmd->SQ.subOpCode == FID_DEVICE_MPU_UTILIZATION) {
+		pCmd->CQ.data[0] = memx_sram_read(memx_dev, (MXCNST_MPUUTIL_BASE+(pCmd->SQ.cdw2 << 2)));
+		pCmd->CQ.status = ERROR_STATUS_NO_ERROR;
 	} else {
 		memx_admin_trigger(memx_dev, CHIP_ID0, pCmd);
 		pCmd->CQ.status = memx_admin_fetch_result(memx_dev, CHIP_ID0, pCmd);
@@ -239,6 +247,15 @@ static long _admin_command(struct memx_pcie_dev *memx_dev, struct transport_cmd 
 			break;
 		case MEMX_ADMIN_CMD_SELFTEST:
 			ret = _admin_selftest(memx_dev, pCmd);
+			break;
+		case MEMX_ADMIN_CMD_DEVIOCTRL:
+			if (pCmd->SQ.subOpCode == FID_DEVICE_I2C_TRANSCEIVE) {
+				pCmd->SQ.opCode = MEMX_ADMIN_CMD_SET_FEATURE;
+				ret = _admin_set_feature(memx_dev, pCmd);
+			} else {
+				ret = -EFAULT;
+				pr_err(" _admin_command: non-support admin cmd(%u) sub(%u)\n", pCmd->SQ.opCode, pCmd->SQ.subOpCode);
+			}
 			break;
 		default:
 			ret = -EFAULT;

@@ -30,11 +30,12 @@ enum xflow_mpu_sw_irq_idx {
 	max_support_mpu_sw_irq_num
 };
 
+#define DEVICE_IRQ_COUNT ((reset_mpu_idx_7) - (reserve_idx_2) + 1)
 
 struct memx_pcie_dev;
 void memx_xflow_write(struct memx_pcie_dev *memx_dev, u8 chip_id, u32 base_addr, u32 base_addr_offset, u32 value, bool access_mpu);
 u32 memx_xflow_read(struct memx_pcie_dev *memx_dev, u8 chip_id, u32 base_addr, u32 base_addr_offset, bool access_mpu);
-void memx_xflow_trigger_mpu_sw_irq(struct memx_pcie_dev *memx_dev, u8 chip_id, enum xflow_mpu_sw_irq_idx sw_irq_idx);
 void memx_sram_write(struct memx_pcie_dev *memx_dev, u32 base_addr, u32 value);
 u32 memx_sram_read(struct memx_pcie_dev *memx_dev, u32 base_addr);
+s32 memx_xflow_basic_check(struct memx_pcie_dev *memx_dev, u8 chip_id);
 #endif

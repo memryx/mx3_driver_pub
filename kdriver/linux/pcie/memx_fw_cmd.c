@@ -95,7 +95,7 @@ static s32 memx_send_command_to_firmware(struct memx_pcie_dev *memx_dev, enum PC
 
 	// trigger mpu sw irq 4 to request mpu to process firmware command which host already put in command event buffer and
 	// when fw write back to the same buffer in data area as event result, firmware will issue a msix to notify udriver the cmd process done.
-	memx_xflow_trigger_mpu_sw_irq(memx_dev, 0, fw_cmd_idx_4);
+	memx_pcie_trigger_device_irq(memx_dev, 0, fw_cmd_idx_4);
 #ifdef DEBUG
 	pr_info("memryx: send cmd[%u] with expected_len[%u] to fw\n", op_code, expected_payload_length);
 #endif

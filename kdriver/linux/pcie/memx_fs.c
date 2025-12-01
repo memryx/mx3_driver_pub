@@ -8,6 +8,10 @@
 #include "memx_xflow.h"
 
 #define MEMX_NUM_OF_FS_CMDS (sizeof(g_fs_cmd_tbl) / sizeof(struct memx_fs_cmd_cb))
+#define DATA_BEGIN_CHIP_0 (0)
+#define DATA_END_CHIP_0 CQ_DATA_LEN
+#define MEMX_GET_CHIP_ADMIN_CMD_BASE_VIRTUAL_ADDR(memx_dev, chip_id) (((memx_dev)->mpu_data.rx_dma_coherent_buffer_virtual_base) + \
+																		MEMX_ADMCMD_VIRTUAL_OFFSET + ((chip_id) * MEMX_ADMCMD_SIZE))
 
 static struct memx_fs_cmd_cb g_fs_cmd_tbl[] = {
 	{ "fwlog", FS_CMD_FWLOG_ARGC, memx_fs_cmd_handler},
@@ -160,6 +164,163 @@ s32 memx_fs_parse_cmd_and_exec(struct memx_pcie_dev *memx_dev, const char __user
 
 	kfree(input_parser_buffer_ptr);
 	return ret;
+}
+
+s32 memx_fs_parse_i2ctrl_and_exec(struct memx_pcie_dev *memx_dev, const char __user *user_input_buf, size_t user_input_buf_size)
+{
+	s32 ret = -EINVAL;
+	char *found = NULL;
+	const char delimiters[] = {' ', '\0'}; // space, \0
+	// [w-byte-cnt], wdata0, wdata1,..., [r-byte-cnt]
+	u8 max_len = 17;
+	char *argv[17] = {NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL};
+	u8 argc = 0;
+	char *input_parser_buffer_ptr = NULL;
+	u32 wlen = 0, data, i;
+	struct transport_cmd cmd = {0};
+	u8 *pbuf8;
+
+	if (memx_dev->fs.type == MEMX_FS_HIF_SYS) {
+		input_parser_buffer_ptr = kstrdup(user_input_buf, GFP_KERNEL);
+		if (!input_parser_buffer_ptr) {
+			//pr_err("memx_fs_parser: kstrdup fail!\n");
+			return ret;
+		}
+	} else {
+		input_parser_buffer_ptr = memdup_user_nul(user_input_buf, user_input_buf_size);
+		if (IS_ERR(input_parser_buffer_ptr)) {
+			pr_err("memx_fs_parser: memdup_user_nul fail!\n");
+			return PTR_ERR(input_parser_buffer_ptr);
+		}
+	}
+
+	// parse command string by deleimiters and get the final argc
+	while ((found = strsep(&input_parser_buffer_ptr, delimiters)) != NULL) {
+		if (argc < max_len) {
+			argv[argc++] = found;
+			//pr_info("argv[%d]=%s\n", argc-1, argv[argc-1]);
+		} else {
+			argc++;
+		}
+	}
+
+	if ((argc < FS_CMD_FWLOG_ARGC) || (argc > max_len)) {
+		pr_err("memx_i2ctrl_parser: argc should be te range in 2-%d but (%u)\n", max_len, argc);
+		return ret;
+	}
+
+	if (kstrtou32(argv[0], 0, &wlen)) {
+		pr_err("kstrtou32 convert error 1\n");
+		return ret;
+	}
+
+	if (wlen > max_len-1) {
+		pr_err("memx_i2ctrl_parser: max write len is %d (%u)\n", max_len-1, wlen);
+		return ret;
+	}
+	//pr_info("len=%u\r\n", wlen);
+	wlen = wlen&0xFE;
+
+	cmd.SQ.opCode = MEMX_ADMIN_CMD_SET_FEATURE;
+	cmd.SQ.subOpCode = FID_DEVICE_I2C_TRANSCEIVE;
+	cmd.SQ.reqLen = wlen>>1;
+	pbuf8 = (u8 *) &(cmd.SQ.cdw3);
+	for (i = 0; i < wlen; i++) {
+		if (!kstrtou32(argv[i+1], 0, &data))
+			pbuf8[i] = data & 0xFF;
+	}
+
+	mutex_lock(&memx_dev->adminlock);
+	memx_admin_trigger(memx_dev, 0, &cmd);
+	cmd.CQ.status = memx_admin_fetch_result(memx_dev, 0, &cmd);
+	mutex_unlock(&memx_dev->adminlock);
+	pbuf8 = (u8 *) &(cmd.CQ.data[3]);
+	pr_info("--------------------\n");
+	for (i = 0; i < (wlen >> 1); i++) {
+		if (pbuf8[(i<<1)+1] & 0x10)
+			pr_info("R data[%d]=0x%02X - OK\n", i, pbuf8[(i<<1)]);
+		else if (pbuf8[(i<<1)+1] & 0x4)
+			pr_info("W data[%d]=0x%02X - I2C_NACK\n", i, pbuf8[(i<<1)]);
+		else
+			pr_info("W data[%d]=0x%02X - OK\n", i, pbuf8[(i<<1)]);
+	}
+
+	kfree(input_parser_buffer_ptr);
+	return 0;
+}
+
+s32 memx_fs_parse_gpioctrl_and_exec(struct memx_pcie_dev *memx_dev, const char __user *user_input_buf, size_t user_input_buf_size)
+{
+	s32 ret = -EINVAL;
+	char *found = NULL;
+	const char delimiters[] = {' ', '\0'}; // space, \0
+	u8 max_len = 3;
+	char *argv[3] = {NULL, NULL, NULL};
+	u8 argc = 0;
+	char *input_parser_buffer_ptr = NULL;
+	struct transport_cmd cmd = {0};
+	u32 gpio_number = 0, gpio_value = 0;
+
+	if (memx_dev->fs.type == MEMX_FS_HIF_SYS) {
+		input_parser_buffer_ptr = kstrdup(user_input_buf, GFP_KERNEL);
+		if (!input_parser_buffer_ptr) {
+			//pr_err("memx_fs_parser: kstrdup fail!\n");
+			return ret;
+		}
+	} else {
+		input_parser_buffer_ptr = memdup_user_nul(user_input_buf, user_input_buf_size);
+		if (IS_ERR(input_parser_buffer_ptr)) {
+			pr_err("memx_fs_parser: memdup_user_nul fail!\n");
+			return PTR_ERR(input_parser_buffer_ptr);
+		}
+	}
+
+	// parse command string by deleimiters and get the final argc
+	while ((found = strsep(&input_parser_buffer_ptr, delimiters)) != NULL) {
+		if (argc < max_len) {
+			argv[argc++] = found;
+			//pr_info("argv[%d]=%s\n", argc-1, argv[argc-1]);
+		} else {
+			argc++;
+		}
+	}
+
+	if ((argc < FS_CMD_FWLOG_ARGC) || (argc > max_len)) {
+		pr_err("memx_i2ctrl_parser: argc should be te range in 2-%d but (%u)\n", max_len, argc);
+		return ret;
+	}
+
+	if (kstrtou32(argv[1], 0, &gpio_number)) {
+		pr_err("%s: kstrtou32 convert error\n", __func__);
+		return ret;
+	}
+	gpio_number = gpio_number & 0xFFF;
+
+	if (strncmp(argv[0], "r", 1) == 0) {
+		memx_dev->gpio_r = gpio_number;
+		return 0;
+	} else if ((strncmp(argv[0], "w", 1) == 0) && (argc == 3)) {
+		if (kstrtou32(argv[2], 0, &gpio_value)) {
+			pr_err("%s: kstrtou32 convert error\n", __func__);
+			return ret;
+		}
+	} else {
+		pr_err("%s: command error (%s)(%d)\n", __func__, argv[0], argc);
+		return ret;
+	}
+
+	cmd.SQ.opCode    = MEMX_ADMIN_CMD_SET_FEATURE;
+	cmd.SQ.subOpCode = FID_DEVICE_GPIO; 
+	cmd.SQ.cdw3      = (gpio_number >> 0) & 0xFF;
+	cmd.SQ.cdw4      = gpio_value > 0;
+
+	mutex_lock(&memx_dev->adminlock);
+	memx_admin_trigger(memx_dev, (gpio_number >> 8) & 0xF, &cmd);
+	cmd.CQ.status = memx_admin_fetch_result(memx_dev, (gpio_number >> 8) & 0xF, &cmd);
+	mutex_unlock(&memx_dev->adminlock);
+
+	kfree(input_parser_buffer_ptr);
+	return 0;
 }
 
 u32 memx_crc32(const uint8_t *data, size_t length)

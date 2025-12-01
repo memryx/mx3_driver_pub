@@ -4,6 +4,8 @@
 #include <linux/version.h>
 #include <linux/firmware.h>
 #include <linux/jiffies.h>
+#include <linux/delay.h>
+#include <linux/namei.h>
 
 #include "memx_pcie.h"
 #include "memx_xflow.h"
@@ -48,6 +50,54 @@ static s32 memx_proc_debug_usage(struct seq_file *sfile, void *v)
 	return 0;
 }
 
+static s32 memx_proc_i2ctrl_usage(struct seq_file *sfile, void *v)
+{
+	//struct memx_pcie_dev *memx_dev = sfile->private;
+
+	seq_puts(sfile, "\nUsage: echo \"[rw-byte-cnt] data0 data0-param data1 data1-param ... dataN dataN-param \" > /proc/memx[dev_id 0-3]/i2ctrl\n");
+	seq_puts(sfile, "[rw-byte-cnt] must be even number because each data byte must specified related paramter to assign such as I2C-START,STOP,NACK on i2c bus transaction\n");
+	seq_puts(sfile, "parameter byte definition: bit[0]-START / bit[1]-STOP / bit[2]-NACK / bit[4]=0 means WRITE-data / bit[4]=1 means READ-data\n");
+	seq_puts(sfile, "Ex: you need to set i2c slave address byte with START bit asserted to match i2c protocol\n");
+	seq_puts(sfile, "=================================================================================================\n");
+	seq_puts(sfile, "For example : 8bits-Salve address 0xC0 and you wait to read address 0x1234 and data length 2 byte\n");
+	seq_puts(sfile, "Then the command should like this: echo \"12 0xC0 0x01 0x12 0x00 0x34 0x00 0xC1 0x01 0x00 0x10 0x00 0x16\" > /proc/memx0/i2ctrl; sudo dmesg | tail -n 10\n");
+	seq_puts(sfile, "(12): there are 12 bytes in this console command follows\n");
+	seq_puts(sfile, "(0xC0 0x01): This means i2c bus transmit BYTE[0]=0xC0 with START bit is set, This is WRITE data byte\n");
+	seq_puts(sfile, "(0x12 0x00): This means i2c bus transmit BYTE[1]=0x12 ,no START/STOP/NACK should sned, This is WRITE data byte\n");
+	seq_puts(sfile, "(0x34 0x00): This means i2c bus transmit BYTE[2]=0x34 ,no START/STOP/NACK should sned, This is WRITE data byte\n");
+	seq_puts(sfile, "(0xC1 0x01): This means i2c bus transmit BYTE[3]=0xC1 with START bit is set, This is WRITE data byte, bit[0]=1 means read in the following data\n");
+	seq_puts(sfile, "(0x00 0x10): This means i2c bus transmit BYTE[4] is READ data, the data field 0x00 here is dont care.\n");
+	seq_puts(sfile, "(0x00 0x16): This means i2c bus transmit BYTE[5] is READ data, the data field 0x00 here is dont care. and also send NACK/STOP when this byte completed\n");
+	seq_puts(sfile, "after completed, the BYTE[4]BYTE[5]read data value would shown on kernel messages to check\n");
+	seq_puts(sfile, "=================================================================================================\n");
+	seq_puts(sfile, "For example : 8bits-Salve address 0xB4 and you want to send PMBUS_VOUT_COMMAND(0x21) with value 0x0D99\n");
+	seq_puts(sfile, "Then the command should like this: echo \"8 0xb4 0x01 0x21 0x00 0x99 0x00 0x0d 0x02\" > /proc/memx0/i2ctrl; sudo dmesg | tail -n 10\n");
+	seq_puts(sfile, "This command can read back to confirm: echo \"10 0xb4 0x01 0x21 0x00 0xb5 0x01 0x00 0x10 0x00 0x16\" > /proc/memx0/i2ctrl; sudo dmesg | tail -n 10\n");
+	seq_puts(sfile, "=================================================================================================\n");
+	return 0;
+}
+
+static s32 memx_proc_gpioctrl_usage(struct seq_file *sfile, void *v)
+{
+	struct memx_pcie_dev *memx_dev = sfile->private;
+	struct transport_cmd cmd = {0};
+
+	//step1: echo "r goio_number" > /proc/memx0/gpioctrl
+	//step2: cat /proc/memx0/gpioctrl
+
+	cmd.SQ.opCode = MEMX_ADMIN_CMD_GET_FEATURE;
+	cmd.SQ.subOpCode = FID_DEVICE_GPIO;
+	cmd.CQ.data[0] = memx_dev->gpio_r & 0xFF;
+
+	mutex_lock(&memx_dev->adminlock);
+	memx_admin_trigger(memx_dev, ((memx_dev->gpio_r >> 8) & 0xF), &cmd);
+	cmd.CQ.status = memx_admin_fetch_result(memx_dev, ((memx_dev->gpio_r >> 8) & 0xF), &cmd);
+	mutex_unlock(&memx_dev->adminlock);
+
+	seq_printf(sfile, "%d (chip%d io%d)", cmd.CQ.data[1], ((memx_dev->gpio_r >> 8) & 0xF), ((memx_dev->gpio_r >> 0) & 0xFF));
+	return 0;
+}
+
 static s32 memx_proc_qspi_usage(struct seq_file *sfile, void *v)
 {
 	struct memx_pcie_dev *memx_dev = sfile->private;
@@ -58,6 +108,12 @@ static s32 memx_proc_qspi_usage(struct seq_file *sfile, void *v)
 	unsigned long timeout;
 	u32 crc_value = 0, crc_check = 1;
 	u32 type_value = 0, type_check = 0;
+
+	// Release QSPI Rst
+	*((_VOLATILE_ u32 *)(MEMX_GET_CHIP_RMTCMD_PARAM_VIRTUAl_ADDR(memx_dev, 0)))   = 0x20000208;
+	*((_VOLATILE_ u32 *)(MEMX_GET_CHIP_RMTCMD_PARAM2_VIRTUAl_ADDR(memx_dev, 0)))  = 0x700f0036;
+	*((_VOLATILE_ u32 *)(MEMX_GET_CHIP_RMTCMD_COMMAND_VIRTUAl_ADDR(memx_dev, 0))) = MXCNST_MEMXW_CMD;
+	msleep(50);
 
 	seq_puts(sfile,	 "================================================================================================\n");
 	if (request_firmware(&firmware, FIRMWARE_BIN_NAME, &memx_dev->pDev->dev) < 0) {
@@ -218,8 +274,8 @@ static s32 memx_proc_throughput_usage(struct seq_file *sfile, void *v)
 	u32 read_quotient = udrv_r_value ? (kdrv_r_value * 100 / udrv_r_value) : 0;
 	u32 read_decimal = udrv_r_value ? (kdrv_r_value * 100 % udrv_r_value) * 1000 / udrv_r_value : 0;
 
-	seq_printf(sfile, "  Item  |  Period(us)  |   Data(KB)   |   TP(MB/s)   | Kdrv/Udrv\n");
-	seq_printf(sfile, "--------+--------------+--------------+--------------+-------------\n");
+	seq_puts(sfile, "  Item  |  Period(us)  |   Data(KB)   |   TP(MB/s)   | Kdrv/Udrv\n");
+	seq_puts(sfile, "--------+--------------+--------------+--------------+-------------\n");
 	seq_printf(sfile, " Kdrv_W |  %#10x  |  %#10x  | %8u.%03u\n", tx_time_us, tx_size_kb, kdrv_w_quotient, kdrv_w_decimal);
 	seq_printf(sfile, " Udrv_W |  %#10x  |  %#10x  | %8u.%03u | %3u.%03u %%\n", udrv_throughput_info.stream_write_us, udrv_throughput_info.stream_write_kb, udrv_w_quotient, udrv_w_decimal, write_quotient, write_decimal);
 	seq_printf(sfile, " Kdrv_R |  %#10x  |  %#10x  | %8u.%03u\n", rx_time_us, rx_size_kb, kdrv_r_quotient, kdrv_r_decimal);
@@ -260,6 +316,24 @@ static int memx_proc_open_qspi(struct inode *inode, struct file *file)
 	return single_open(file, memx_proc_qspi_usage, pde_data(inode));
 #else
 	return single_open(file, memx_proc_qspi_usage, PDE_DATA(inode));
+#endif
+}
+
+static int memx_proc_open_i2ctrl(struct inode *inode, struct file *file)
+{
+#if KERNEL_VERSION(5, 17, 11) <= _LINUX_VERSION_CODE_
+	return single_open(file, memx_proc_i2ctrl_usage, pde_data(inode));
+#else
+	return single_open(file, memx_proc_i2ctrl_usage, PDE_DATA(inode));
+#endif
+}
+
+static int memx_proc_open_gpioctrl(struct inode *inode, struct file *file)
+{
+#if KERNEL_VERSION(5, 17, 11) <= _LINUX_VERSION_CODE_
+	return single_open(file, memx_proc_gpioctrl_usage, pde_data(inode));
+#else
+	return single_open(file, memx_proc_gpioctrl_usage, PDE_DATA(inode));
 #endif
 }
 
@@ -394,6 +468,72 @@ ssize_t memx_proc_write_thermal(struct file *file, const char __user *user_input
 	return user_input_buf_size;
 }
 
+ssize_t memx_proc_write_i2ctrl(struct file *file, const char __user *user_input_buf, size_t user_input_buf_size, loff_t *off);
+ssize_t memx_proc_write_i2ctrl(struct file *file, const char __user *user_input_buf, size_t user_input_buf_size, loff_t *off)
+{
+	s32 ret = -EINVAL;
+	struct memx_pcie_dev *memx_dev = NULL;
+
+	if (!file || !file->private_data) {
+		pr_err("%s: file or file->private_data is NULL!\n", __func__);
+		return ret;
+	}
+	memx_dev = ((struct seq_file *)file->private_data)->private;
+	if (!memx_dev) {
+		pr_err("%s: memx_dev is NULL!\n", __func__);
+		return ret;
+	}
+	if (!user_input_buf) {
+		pr_err("%s: user input buf is NULL!\n", __func__);
+		return ret;
+	}
+	if (user_input_buf_size == 0) {
+		pr_err("Command length is invild!\n");
+		return ret;
+	}
+
+	ret = memx_fs_parse_i2ctrl_and_exec(memx_dev, user_input_buf, user_input_buf_size);
+	if (ret != 0) {
+		pr_err("%s: parse or exec fail!, err(%d)\n", __func__, ret);
+		return ret;
+	}
+
+	return user_input_buf_size;
+}
+
+ssize_t memx_proc_write_gpioctrl(struct file *file, const char __user *user_input_buf, size_t user_input_buf_size, loff_t *off);
+ssize_t memx_proc_write_gpioctrl(struct file *file, const char __user *user_input_buf, size_t user_input_buf_size, loff_t *off)
+{
+	s32 ret = -EINVAL;
+	struct memx_pcie_dev *memx_dev = NULL;
+
+	if (!file || !file->private_data) {
+		pr_err("%s: file or file->private_data is NULL!\n", __func__);
+		return ret;
+	}
+	memx_dev = ((struct seq_file *)file->private_data)->private;
+	if (!memx_dev) {
+		pr_err("%s: memx_dev is NULL!\n", __func__);
+		return ret;
+	}
+	if (!user_input_buf) {
+		pr_err("%s: user input buf is NULL!\n", __func__);
+		return ret;
+	}
+	if (user_input_buf_size == 0) {
+		pr_err("Command length is invild!\n");
+		return ret;
+	}
+
+	ret = memx_fs_parse_gpioctrl_and_exec(memx_dev, user_input_buf, user_input_buf_size);
+	if (ret != 0) {
+		pr_err("%s: parse or exec fail!, err(%d)\n", __func__, ret);
+		return ret;
+	}
+
+	return user_input_buf_size;
+}
+
 #if  KERNEL_VERSION(5, 6, 0) <= _LINUX_VERSION_CODE_
 static const struct proc_ops proc_cmd_fops = {
 	.proc_open	= memx_proc_open,
@@ -414,6 +554,20 @@ static const struct proc_ops proc_qspi_fops = {
 	.proc_read	= seq_read,
 	.proc_lseek   = seq_lseek,
 	.proc_release = single_release,
+};
+static const struct proc_ops proc_i2ctrl_fops = {
+	.proc_open	= memx_proc_open_i2ctrl,
+	.proc_read	= seq_read,
+	.proc_lseek   = seq_lseek,
+	.proc_release = single_release,
+	.proc_write   = memx_proc_write_i2ctrl
+};
+static const struct proc_ops proc_gpioctrl_fops = {
+	.proc_open	= memx_proc_open_gpioctrl,
+	.proc_read	= seq_read,
+	.proc_lseek   = seq_lseek,
+	.proc_release = single_release,
+	.proc_write   = memx_proc_write_gpioctrl
 };
 static const struct proc_ops proc_thermal_fops = {
 	.proc_open	= memx_proc_open_thermal,
@@ -470,6 +624,22 @@ static struct file_operations proc_qspi_fops = {
 	.llseek  = seq_lseek,
 	.release = single_release
 	};
+static struct file_operations proc_i2ctrl_fops = {
+	.owner   = THIS_MODULE,
+	.open	= memx_proc_open_i2ctrl,
+	.read	= seq_read,
+	.llseek  = seq_lseek,
+	.release = single_release,
+	.write   = memx_proc_write_i2ctrl
+	};
+static struct file_operations proc_gpioctrl_fops = {
+	.owner   = THIS_MODULE,
+	.open	= memx_proc_open_gpioctrl,
+	.read	= seq_read,
+	.llseek  = seq_lseek,
+	.release = single_release,
+	.write   = memx_proc_write_gpioctrl
+	};
 static struct file_operations proc_thermal_fops = {
 	.owner   = THIS_MODULE,
 	.open	= memx_proc_open_thermal,
@@ -515,7 +685,7 @@ s32 memx_fs_proc_init(struct memx_pcie_dev *memx_dev)
 	int minor = 0;
 #ifndef ANDROID
 	char name[128];
-	struct file *fp;
+	struct path path;
 #endif
 
 	if (!memx_dev) {
@@ -526,14 +696,12 @@ s32 memx_fs_proc_init(struct memx_pcie_dev *memx_dev)
 #ifndef ANDROID
 	for (minor = 0; minor < 128; minor++) {
 		sprintf(name, "/proc/memx%d/cmd", minor);
-		fp = filp_open(name, O_RDONLY, 0);
-		if (IS_ERR(fp)) {
+		if (kern_path(name, LOOKUP_FOLLOW, &path)) {
 			pr_info("memryx: register for %s\n", name);
 			break;
 
 		} else {
-			//pr_err("memryx: file existed %p\n", fp);
-			filp_close(fp, NULL);
+            path_put(&path);
 		}
 	}
 #endif
@@ -569,6 +737,27 @@ s32 memx_fs_proc_init(struct memx_pcie_dev *memx_dev)
 			proc_remove(memx_dev->fs.hif.proc.root_dir);
 			return -EINVAL;
 		}
+
+		memx_dev->fs.hif.proc.i2ctrl_entry = proc_create_data("i2ctrl", MXCNST_RWACCESS, memx_dev->fs.hif.proc.root_dir, &proc_i2ctrl_fops, memx_dev);
+		if (!memx_dev->fs.hif.proc.i2ctrl_entry) {
+			pr_err("failed to create proc file for i2ctrl!\n");
+			proc_remove(memx_dev->fs.hif.proc.qspi_entry);
+			proc_remove(memx_dev->fs.hif.proc.debug_entry);
+			proc_remove(memx_dev->fs.hif.proc.cmd_entry);
+			proc_remove(memx_dev->fs.hif.proc.root_dir);
+			return -EINVAL;
+		}
+
+		memx_dev->fs.hif.proc.gpio_entry = proc_create_data("gpioctrl", MXCNST_RWACCESS, memx_dev->fs.hif.proc.root_dir, &proc_gpioctrl_fops, memx_dev);
+		if (!memx_dev->fs.hif.proc.gpio_entry) {
+			pr_err("failed to create proc file for gpio!\n");
+			proc_remove(memx_dev->fs.hif.proc.i2ctrl_entry);
+			proc_remove(memx_dev->fs.hif.proc.qspi_entry);
+			proc_remove(memx_dev->fs.hif.proc.debug_entry);
+			proc_remove(memx_dev->fs.hif.proc.cmd_entry);
+			proc_remove(memx_dev->fs.hif.proc.root_dir);
+			return -EINVAL;
+		}
 	}
 
 	memx_dev->fs.hif.proc.verinfo_entry = proc_create_data("verinfo", 0444, memx_dev->fs.hif.proc.root_dir, &proc_verinfo_fops, memx_dev);
@@ -576,6 +765,8 @@ s32 memx_fs_proc_init(struct memx_pcie_dev *memx_dev)
 		pr_err("memryx: failed to create proc file for verinfo_entry!\n");
 		if (memx_dev->fs.debug_en) {
 			proc_remove(memx_dev->fs.hif.proc.debug_entry);
+			proc_remove(memx_dev->fs.hif.proc.gpio_entry);
+			proc_remove(memx_dev->fs.hif.proc.i2ctrl_entry);
 			proc_remove(memx_dev->fs.hif.proc.qspi_entry);
 		}
 		proc_remove(memx_dev->fs.hif.proc.cmd_entry);
@@ -589,6 +780,8 @@ s32 memx_fs_proc_init(struct memx_pcie_dev *memx_dev)
 		proc_remove(memx_dev->fs.hif.proc.verinfo_entry);
 		if (memx_dev->fs.debug_en) {
 			proc_remove(memx_dev->fs.hif.proc.debug_entry);
+			proc_remove(memx_dev->fs.hif.proc.gpio_entry);
+			proc_remove(memx_dev->fs.hif.proc.i2ctrl_entry);
 			proc_remove(memx_dev->fs.hif.proc.qspi_entry);
 		}
 		proc_remove(memx_dev->fs.hif.proc.cmd_entry);
@@ -603,6 +796,8 @@ s32 memx_fs_proc_init(struct memx_pcie_dev *memx_dev)
 		proc_remove(memx_dev->fs.hif.proc.verinfo_entry);
 		if (memx_dev->fs.debug_en) {
 			proc_remove(memx_dev->fs.hif.proc.debug_entry);
+			proc_remove(memx_dev->fs.hif.proc.gpio_entry);
+			proc_remove(memx_dev->fs.hif.proc.i2ctrl_entry);
 			proc_remove(memx_dev->fs.hif.proc.qspi_entry);
 		}
 		proc_remove(memx_dev->fs.hif.proc.cmd_entry);
@@ -619,6 +814,8 @@ s32 memx_fs_proc_init(struct memx_pcie_dev *memx_dev)
 			proc_remove(memx_dev->fs.hif.proc.verinfo_entry);
 			if (memx_dev->fs.debug_en) {
 				proc_remove(memx_dev->fs.hif.proc.debug_entry);
+				proc_remove(memx_dev->fs.hif.proc.gpio_entry);
+				proc_remove(memx_dev->fs.hif.proc.i2ctrl_entry);
 				proc_remove(memx_dev->fs.hif.proc.qspi_entry);
 			}
 			proc_remove(memx_dev->fs.hif.proc.cmd_entry);
@@ -635,6 +832,8 @@ s32 memx_fs_proc_init(struct memx_pcie_dev *memx_dev)
 			proc_remove(memx_dev->fs.hif.proc.verinfo_entry);
 			if (memx_dev->fs.debug_en) {
 				proc_remove(memx_dev->fs.hif.proc.debug_entry);
+				proc_remove(memx_dev->fs.hif.proc.gpio_entry);
+				proc_remove(memx_dev->fs.hif.proc.i2ctrl_entry);
 				proc_remove(memx_dev->fs.hif.proc.qspi_entry);
 			}
 			proc_remove(memx_dev->fs.hif.proc.cmd_entry);
@@ -662,6 +861,8 @@ void memx_fs_proc_deinit(struct memx_pcie_dev *memx_dev)
 	if (memx_dev->fs.debug_en) {
 		proc_remove(memx_dev->fs.hif.proc.debug_entry);
 		proc_remove(memx_dev->fs.hif.proc.qspi_entry);
+		proc_remove(memx_dev->fs.hif.proc.gpio_entry);
+		proc_remove(memx_dev->fs.hif.proc.i2ctrl_entry);
 	}
 	proc_remove(memx_dev->fs.hif.proc.cmd_entry);
 	proc_remove(memx_dev->fs.hif.proc.root_dir);

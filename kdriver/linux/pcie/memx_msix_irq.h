@@ -6,6 +6,13 @@
 
 #define MEMRYX_MIN_MSIX_NUMBER (1)
 #define MEMRYX_MAX_MSIX_NUMBER (33)
+#define MEMRYX_MAX_MSI_NUMBER  (32)
+
+#define MEMRYX_MSI_ALLOW_MIN        8
+#define MEMRYX_LEGACY_MSG_ADDR      0x40046F84
+#define MEMRYX_LEGACY_MSG_CLR_INTA  0x80000000
+#define MEMRYX_LEGACY_MSG_INT_CLRED 0x40000000
+#define MEMRYX_LEGACY_CLEAR_MSG     0x00000000
 
 struct memx_irq_entry {
 	const char *name;       // descript irq purpose
@@ -46,8 +53,5 @@ struct memx_interrupt {
 struct memx_pcie_dev;
 s32 memx_init_msix_irq(struct memx_pcie_dev *memx_dev);
 void memx_deinit_msix_irq(struct memx_pcie_dev *memx_dev);
-
-s32 memx_enable_device_msix_capability(struct memx_pcie_dev *memx_dev);
-void memx_disable_device_msix_capability(struct memx_pcie_dev *memx_dev);
 
 #endif

@@ -1,27 +1,7 @@
 /***************************************************************************//**
-
- Copyright (c) 2019-2025 MemryX Inc.
-
- MIT License
-
- Permission is hereby granted, free of charge, to any person obtaining a
- copy of this software and associated documentation files (the "Software"),
- to deal in the Software without restriction, including without limitation
- the rights to use, copy, modify, merge, publish, distribute, sublicense,
- and/or sell copies of the Software, and to permit persons to whom the
- Software is furnished to do so, subject to the following conditions:
-
- The above copyright notice and this permission notice shall be included
- in all copies or substantial portions of the Software.
-
- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
- CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
- SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
+ * @note
+ * Copyright (C) 2019-2022 MemryX Limited. All rights reserved.
+ *
  ******************************************************************************/
 
 /***************************************************************************//**
@@ -37,7 +17,6 @@
 #include <numpy/ndarraytypes.h>
 
 // wraps all constants and functions within 'memx.h' to python
-//#include "../udriver/include/common/memx.h"
 #include <memx/memx.h>
 
 // has all the gbf convert stuff
@@ -674,6 +653,32 @@ static PyObject* _wrap_memx_get_interface_info(PyObject* self, PyObject* args)
   }
 }
 
+static PyObject* _wrap_memx_get_utilization(PyObject* self, PyObject* args)
+{
+  memx_status status;
+  uint64_t value;
+  uint8_t group_id;
+  uint8_t chip_id;
+
+  if(!PyArg_ParseTuple(args, "Bb", &group_id, &chip_id)) {
+    PyErr_BadArgument();
+    return NULL;
+  }
+  {
+    Py_BEGIN_ALLOW_THREADS
+    status = memx_get_feature(group_id, chip_id, OPCODE_GET_MPU_UTILIZATION, &value);
+    Py_END_ALLOW_THREADS
+  }
+
+  unused(self);
+  if(status) {
+    // non-zero error
+    return Py_BuildValue("K", status);
+  } else {
+    return Py_BuildValue("K", value);
+  }
+}
+
 static PyObject* _wrap_memx_set_frequency(PyObject* self, PyObject* args)
 {
   memx_status status = MEMX_STATUS_OK;
@@ -1190,7 +1195,7 @@ static PyObject* _wrap_memx_stream_ifmap(PyObject* self, PyObject* args, PyObjec
 
             Py_INCREF(ifmap);
             Py_BEGIN_ALLOW_THREADS
-            
+
             formatted_data = malloc(fmt_size);
             memset(formatted_data, 0, fmt_size);
             convert_gbf( (void*)PyArray_DATA(ifmap), formatted_data, tensor_size, num_ch );
@@ -1325,7 +1330,7 @@ static PyObject* _wrap_memx_stream_ofmap(PyObject* self, PyObject* args, PyObjec
             // recv
             Py_INCREF(ofmap);
             Py_BEGIN_ALLOW_THREADS
-            
+
             formatted_data = malloc(fmt_size);
             memset(formatted_data, 0, fmt_size);
             status = memx_stream_ofmap(model_id, flow_id, formatted_data, timeout);
@@ -1599,6 +1604,92 @@ static PyObject* _wrap_memx_get_device_count(PyObject* self, PyObject* args)
   }
 }
 
+static PyObject* _wrap_memx_devioctrl_i2crw(PyObject* self, PyObject* args)
+{
+  memx_status status = 0;
+  PyObject *byte_obj;
+  int groupid, chipid;
+
+  if (!PyArg_ParseTuple(args, "iiO!", &groupid, &chipid, &PyBytes_Type, &byte_obj)) {
+    PyErr_BadArgument();
+    return Py_BuildValue("i", -255);
+  }
+
+  Py_ssize_t length = PyBytes_Size(byte_obj);
+  uint8_t *data = (uint8_t *)PyBytes_AsString(byte_obj);
+
+  if (data == NULL) {
+    return Py_BuildValue("i", -256);
+  }
+
+  if ((length > 17) || (!(length & 0x1)) || (length != (data[0]+1))) {
+	return Py_BuildValue("i", -257);
+  }
+
+  {
+    Py_BEGIN_ALLOW_THREADS
+	status = memx_devio_control(groupid, chipid, OPCODE_DEVIOCTRL_I2C_RW, data);
+    Py_END_ALLOW_THREADS
+  }
+
+  if (status) {
+    return Py_BuildValue("i", status);
+  }
+
+  PyObject *result = PyBytes_FromStringAndSize((const char *)data, length);
+
+  unused(self);
+  return result;
+}
+
+static PyObject* _wrap_memx_devioctrl_gpiorw(PyObject* self, PyObject* args)
+{
+  memx_status status = 0;
+  PyObject *byte_obj;
+  int groupid, chipid;
+  memx_devioctrl_opcode opcode;
+  uint8_t param[2];
+
+  if (!PyArg_ParseTuple(args, "iiO!", &groupid, &chipid, &PyBytes_Type, &byte_obj)) {
+    PyErr_BadArgument();
+    return Py_BuildValue("i", -255);
+  }
+
+  Py_ssize_t length = PyBytes_Size(byte_obj);
+  uint8_t *data = (uint8_t *)PyBytes_AsString(byte_obj);
+
+  if (data == NULL) {
+    return Py_BuildValue("i", -256);
+  }
+
+
+  if (length == 1) {
+    opcode = OPCODE_DEVIOCTRL_GPIO_R;
+    param[0] = data[0];
+  } else if (length == 2) {
+    opcode = OPCODE_DEVIOCTRL_GPIO_W;
+    param[0] = data[0];
+	param[1] = data[1];
+  } else {
+    return Py_BuildValue("i", -257);
+  }
+
+  {
+    Py_BEGIN_ALLOW_THREADS
+	status = memx_devio_control(groupid, chipid, opcode, param);
+    Py_END_ALLOW_THREADS
+  }
+
+  if (status) {
+    return Py_BuildValue("i", status);
+  }
+
+  PyObject *result = PyBytes_FromStringAndSize((const char *)&param[1], 1);
+
+  unused(self);
+  return result;
+}
+
 /***************************************************************************//**
  * module method
  ******************************************************************************/
@@ -1647,6 +1738,7 @@ static PyMethodDef MemxMethods[] = {
   {"get_poweralert", (PyCFunction)_wrap_memx_get_poweralert, METH_VARARGS|METH_KEYWORDS, NULL},
   {"get_module_info", (PyCFunction)_wrap_memx_get_module_info, METH_VARARGS|METH_KEYWORDS, NULL},
   {"get_interface_info", (PyCFunction)_wrap_memx_get_interface_info, METH_VARARGS|METH_KEYWORDS, NULL},
+  {"get_utilization", (PyCFunction)_wrap_memx_get_utilization, METH_VARARGS|METH_KEYWORDS, NULL},
   {"set_mpu_frequency", (PyCFunction)_wrap_memx_set_frequency, METH_VARARGS, NULL},
   {"set_mpu_voltage", (PyCFunction)_wrap_memx_set_voltage, METH_VARARGS, NULL},
   {"set_mpu_thermal_threshold", (PyCFunction)_wrap_memx_set_thermal_threshold, METH_VARARGS, NULL},
@@ -1659,6 +1751,8 @@ static PyMethodDef MemxMethods[] = {
   {"get_ifmap_control", (PyCFunction)_wrap_memx_get_ifmap_control, METH_VARARGS|METH_KEYWORDS, NULL},
   {"get_total_chip_count", (PyCFunction)_wrap_memx_get_total_chip_count, METH_VARARGS|METH_KEYWORDS, NULL},
   {"get_device_count", (PyCFunction)_wrap_memx_get_device_count, METH_VARARGS|METH_KEYWORDS, NULL},
+  {"devioctrl_i2crw", (PyCFunction)_wrap_memx_devioctrl_i2crw, METH_VARARGS, NULL},
+  {"devioctrl_gpiorw", (PyCFunction)_wrap_memx_devioctrl_gpiorw, METH_VARARGS, NULL},
 
   {NULL, NULL, 0, NULL} // Sentinel
 };

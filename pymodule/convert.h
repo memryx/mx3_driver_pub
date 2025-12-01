@@ -1,49 +1,30 @@
-/***************************************************************************//**
+// Copyright (c) 2025 MemryX
+// SPDX-License-Identifier: MIT
 
- Copyright (c) 2019-2025 MemryX Inc.
-
- MIT License
-
- Permission is hereby granted, free of charge, to any person obtaining a
- copy of this software and associated documentation files (the "Software"),
- to deal in the Software without restriction, including without limitation
- the rights to use, copy, modify, merge, publish, distribute, sublicense,
- and/or sell copies of the Software, and to permit persons to whom the
- Software is furnished to do so, subject to the following conditions:
-
- The above copyright notice and this permission notice shall be included
- in all copies or substantial portions of the Software.
-
- THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
- IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
- CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
- TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
- SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
- ******************************************************************************/
+#ifndef CONVERT_H
+#define CONVERT_H
 
 #include <stdint.h>
-#include <string.h>
 
 // arch optimization checks
 #ifdef __linux__
-  #if defined(__x86_64__) || defined(_M_X64) || defined(__amd64__)
-    #if defined(__BMI__) && defined(__BMI2__) && defined(__LZCNT__) && defined(__AVX2__)
-      #ifndef USE_X86_OPT
-        #define USE_X86_OPT
-      #endif
+    #if defined(__x86_64__) || defined(_M_X64) || defined(__amd64__)
+        #if defined(__BMI__) && defined(__BMI2__) && defined(__LZCNT__) && defined(__AVX2__)
+            #ifndef USE_X86_OPT
+                #define USE_X86_OPT
+                #include <x86intrin.h>
+            #endif
+        #endif
+    #elif defined(__aarch64__) || defined(_M_ARM64)
+        #ifndef USE_ARM64_OPT
+            #define USE_ARM64_OPT
+            #include <arm_neon.h>
+        #endif
     #endif
-  #elif defined(__aarch64__) || defined(_M_ARM64)
-    #ifndef USE_ARM64_OPT
-      #define USE_ARM64_OPT
-    #endif
-  #endif
 #endif
 
-typedef struct _MemxGbfGbf80Map
-{
+
+typedef struct _MemxGbfGbf80Map {
     unsigned int man_0 : 8;
     unsigned int sign_0 : 1;
     unsigned int man_1 : 8;
@@ -67,8 +48,7 @@ typedef struct _MemxGbfGbf80Map
     // but do not append dummy padding manually or will cause memory violation
 } MemxGbfGbf80Map;
 
-typedef struct _MemxGbfFloat32Map
-{
+typedef struct _MemxGbfFloat32Map {
     unsigned int zero : 16; // always zeros field
     unsigned int man : 7;
     unsigned int exp : 8;
@@ -76,158 +56,137 @@ typedef struct _MemxGbfFloat32Map
 } MemxGbfFloat32Map;
 
 
-void gbf_encode(float *flt32_buffer, uint8_t *gbf80_buffer, int length)
+void gbf_encode(uint32_t* __restrict flt32_buffer, uint8_t* __restrict gbf80_buffer, int length)
 {
-    MemxGbfGbf80Map *gbf80_map;
-    MemxGbfFloat32Map *flt32_map;
-    uint8_t *gbf80;
-    float *flt32;
+    MemxGbfGbf80Map* gbf80_map;
+    MemxGbfFloat32Map* flt32_map;
+    uint8_t* gbf80;
+    uint32_t* flt32;
     int gbf80_offset = 0;
     int flt32_offset = 0;
 
     unsigned char exp;
     unsigned char man;
-    #define _MX_MAX(x, y) (((x) > (y)) ? (x) : (y))
-    #define _SET_MANTISSA_SHIFT_WITH_ROUNDING(_exp_shift_)                                                                       \
-        do                                                                                                                       \
-        {                                                                                                                        \
-            if ((_exp_shift_) == 0)                                                                                              \
-            {                                                                                                                    \
-                man = (flt32_map->man == 0x7f) ? (unsigned char)(0x80 | flt32_map->man)                                          \
-                                               : (unsigned char)(0x80 | flt32_map->man) + ((flt32_map->zero >> 15) & 0x1);       \
-            }                                                                                                                    \
-            else                                                                                                                 \
-            {                                                                                                                    \
-                man = (unsigned char)((0x80 | flt32_map->man) >> (_exp_shift_)) + ((flt32_map->man >> ((_exp_shift_)-1)) & 0x1); \
-            }                                                                                                                    \
-        } while (0)
+#define _MX_MAX(x, y) (((x) > (y)) ? (x) : (y))
+#define _SET_MANTISSA_SHIFT_WITH_ROUNDING(_exp_shift_)                                                                       \
+    do                                                                                                                       \
+    {                                                                                                                        \
+        if ((_exp_shift_) == 0)                                                                                              \
+        {                                                                                                                    \
+            man = (flt32_map->man == 0x7f) ? (unsigned char)(0x80 | flt32_map->man)                                          \
+                  : (unsigned char)(0x80 | flt32_map->man) + ((flt32_map->zero >> 15) & 0x1);       \
+        }                                                                                                                    \
+        else                                                                                                                 \
+        {                                                                                                                    \
+            man = (unsigned char)((0x80 | flt32_map->man) >> (_exp_shift_)) + ((flt32_map->man >> ((_exp_shift_)-1)) & 0x1); \
+        }                                                                                                                    \
+    } while (0)
 
-    while ((flt32_offset < length))
-    {
+    while ((flt32_offset < length)) {
         gbf80 = gbf80_buffer + gbf80_offset;
         flt32 = flt32_buffer + flt32_offset;
 
         // performs float32 to float16 rounding, based on IEEE floating point design
         // no need to handle exponent and mantissa separately
-        for (int i = 0; i < 8; ++i)
-        {
-            if (flt32_offset + i < length)
-            {
-                *(uint32_t *)(flt32 + i) += 0x00008000;
-                *(uint32_t *)(flt32 + i) &= 0xffff0000;
+        for (int i = 0; i < 8; ++i) {
+            if (flt32_offset + i < length) {
+                *(uint32_t*)(flt32 + i) += 0x00008000;
+                *(uint32_t*)(flt32 + i) &= 0xffff0000;
             }
         }
 
         // gets maximum exponent among 8 floating points
         exp = 0;
-        for (int i = 0; i < 8; ++i)
-        {
-            if (flt32_offset + i < length)
-            {
-                flt32_map = (MemxGbfFloat32Map *)(flt32 + i);
+        for (int i = 0; i < 8; ++i) {
+            if (flt32_offset + i < length) {
+                flt32_map = (MemxGbfFloat32Map*)(flt32 + i);
                 exp = _MX_MAX(exp, (unsigned char)flt32_map->exp);
             }
         }
 
         // combines 8 floating points to gbf80
-        gbf80_map = (MemxGbfGbf80Map *)gbf80;
+        gbf80_map = (MemxGbfGbf80Map*)gbf80;
         gbf80_map->exp = exp;
-        if (flt32_offset + 0 < length)
-        {
-            flt32_map = (MemxGbfFloat32Map *)(flt32 + 0);
+        if (flt32_offset + 0 < length) {
+            flt32_map = (MemxGbfFloat32Map*)(flt32 + 0);
             _SET_MANTISSA_SHIFT_WITH_ROUNDING(exp - flt32_map->exp);
             gbf80_map->man_0 = man & 0xff;
             gbf80_map->sign_0 = (man & 0xff) ? flt32_map->sign : 0;
         }
-        else
-        {
+        else {
             gbf80_map->man_0 = 0;
             gbf80_map->sign_0 = 0;
         }
-        if (flt32_offset + 1 < length)
-        {
-            flt32_map = (MemxGbfFloat32Map *)(flt32 + 1);
+        if (flt32_offset + 1 < length) {
+            flt32_map = (MemxGbfFloat32Map*)(flt32 + 1);
             _SET_MANTISSA_SHIFT_WITH_ROUNDING(exp - flt32_map->exp);
             gbf80_map->man_1 = man & 0xff;
             gbf80_map->sign_1 = (man & 0xff) ? flt32_map->sign : 0;
         }
-        else
-        {
+        else {
             gbf80_map->man_1 = 0;
             gbf80_map->sign_1 = 0;
         }
-        if (flt32_offset + 2 < length)
-        {
-            flt32_map = (MemxGbfFloat32Map *)(flt32 + 2);
+        if (flt32_offset + 2 < length) {
+            flt32_map = (MemxGbfFloat32Map*)(flt32 + 2);
             _SET_MANTISSA_SHIFT_WITH_ROUNDING(exp - flt32_map->exp);
             gbf80_map->man_2 = man & 0xff;
             gbf80_map->sign_2 = (man & 0xff) ? flt32_map->sign : 0;
         }
-        else
-        {
+        else {
             gbf80_map->man_2 = 0;
             gbf80_map->sign_2 = 0;
         }
-        if (flt32_offset + 3 < length)
-        {
-            flt32_map = (MemxGbfFloat32Map *)(flt32 + 3);
+        if (flt32_offset + 3 < length) {
+            flt32_map = (MemxGbfFloat32Map*)(flt32 + 3);
             _SET_MANTISSA_SHIFT_WITH_ROUNDING(exp - flt32_map->exp);
             gbf80_map->man_3_0 = man & 0x1f;
             gbf80_map->man_3_1 = (man >> 5) & 0x7;
             gbf80_map->sign_3 = (man & 0xff) ? flt32_map->sign : 0;
         }
-        else
-        {
+        else {
             gbf80_map->man_3_0 = 0;
             gbf80_map->man_3_1 = 0;
             gbf80_map->sign_3 = 0;
         }
-        if (flt32_offset + 4 < length)
-        {
-            flt32_map = (MemxGbfFloat32Map *)(flt32 + 4);
+        if (flt32_offset + 4 < length) {
+            flt32_map = (MemxGbfFloat32Map*)(flt32 + 4);
             _SET_MANTISSA_SHIFT_WITH_ROUNDING(exp - flt32_map->exp);
             gbf80_map->man_4 = man & 0xff;
             gbf80_map->sign_4 = (man & 0xff) ? flt32_map->sign : 0;
         }
-        else
-        {
+        else {
             gbf80_map->man_4 = 0;
             gbf80_map->sign_4 = 0;
         }
-        if (flt32_offset + 5 < length)
-        {
-            flt32_map = (MemxGbfFloat32Map *)(flt32 + 5);
+        if (flt32_offset + 5 < length) {
+            flt32_map = (MemxGbfFloat32Map*)(flt32 + 5);
             _SET_MANTISSA_SHIFT_WITH_ROUNDING(exp - flt32_map->exp);
             gbf80_map->man_5 = man & 0xff;
             gbf80_map->sign_5 = (man & 0xff) ? flt32_map->sign : 0;
         }
-        else
-        {
+        else {
             gbf80_map->man_5 = 0;
             gbf80_map->sign_5 = 0;
         }
-        if (flt32_offset + 6 < length)
-        {
-            flt32_map = (MemxGbfFloat32Map *)(flt32 + 6);
+        if (flt32_offset + 6 < length) {
+            flt32_map = (MemxGbfFloat32Map*)(flt32 + 6);
             _SET_MANTISSA_SHIFT_WITH_ROUNDING(exp - flt32_map->exp);
             gbf80_map->man_6 = man & 0xff;
             gbf80_map->sign_6 = (man & 0xff) ? flt32_map->sign : 0;
         }
-        else
-        {
+        else {
             gbf80_map->man_6 = 0;
             gbf80_map->sign_6 = 0;
         }
-        if (flt32_offset + 7 < length)
-        {
-            flt32_map = (MemxGbfFloat32Map *)(flt32 + 7);
+        if (flt32_offset + 7 < length) {
+            flt32_map = (MemxGbfFloat32Map*)(flt32 + 7);
             _SET_MANTISSA_SHIFT_WITH_ROUNDING(exp - flt32_map->exp);
             gbf80_map->man_7_0 = man & 0x1;
             gbf80_map->man_7_1 = (man >> 1) & 0x7f;
             gbf80_map->sign_7 = (man & 0xff) ? flt32_map->sign : 0;
         }
-        else
-        {
+        else {
             gbf80_map->man_7_0 = 0;
             gbf80_map->man_7_1 = 0;
             gbf80_map->sign_7 = 0;
@@ -237,324 +196,424 @@ void gbf_encode(float *flt32_buffer, uint8_t *gbf80_buffer, int length)
         flt32_offset += 8;
     }
 
-} // gbf_encode
+} // gbf_encode;
 
-#ifdef USE_X86_OPT
-#include <x86intrin.h>
 
-// EXTRACTs
-inline uint32_t getbits32(const void* val, unsigned int highbit, unsigned int lowbit){
-    return _bextr_u32(*((const uint32_t*) val), lowbit, highbit-lowbit+1);
-}
-inline uint64_t getbits64(const void* val, unsigned int highbit, unsigned int lowbit){
-    return _bextr_u64(*((const uint64_t*) val), lowbit, highbit-lowbit+1);
-}
-
+//===========================================================================
 // LZCNT
-inline int lzcount(uint32_t a){
-    return _lzcnt_u32(a);
-}
-
-#else
-
-// EXTRACTs (arch-independent)
-inline uint32_t getbits32(const void* val, unsigned int highbit, unsigned int lowbit){
-    return ( (*((const uint32_t*) val)) & (((uint32_t)((1<<(highbit-lowbit+1))-1))<<lowbit) ) >> lowbit;
-}
-inline uint64_t getbits64(const void* val, unsigned int highbit, unsigned int lowbit){
-    return ( (*((const uint64_t*) val)) & (((uint64_t)((1L<<(highbit-lowbit+1))-1L))<<lowbit) ) >> lowbit;
-}
-
-// LZCNT
-#ifdef __GNUC__
-// GCC builin for optimized CLZ
-inline int lzcount(uint32_t a){
-    return (a==0) ? 32 : __builtin_clz(a);
-}
-#else
-// compiler & architecture independent lzcnt algorithm
-const unsigned int clz_table_4[] = {
-    0,
-    4,
-    3, 3,
-    2, 2, 2, 2,
-    1, 1, 1, 1, 1, 1, 1, 1
+static const uint8_t lzcnt_lut[256] = {
+  8,7,6,6,5,5,5,5,4,4,4,4,4,4,4,4,
+  3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+  2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+  2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+  1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+  1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+  1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+  1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+  0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 };
-
-inline int lzcount(uint32_t a){
-    unsigned int n;
-
-    if (a == 0) {
-        return 32;
-    }
-
-    n = clz_table_4[a >> (sizeof(a)*8 - 4)];
-    if (n == 0) {
-        if ((a & 0xFFFF0000) == 0) { n  = 16; a <<= 16; }
-        if ((a & 0xFF000000) == 0) { n += 8;  a <<= 8;  }
-        if ((a & 0xF0000000) == 0) { n += 4;  a <<= 4;  }
-        n += clz_table_4[a >> (sizeof(a)*8 - 4)];
-    }
-
-    return n - 1;
-}
-#endif // lzcount GCC check
-
-#endif // if not USE_X86_OPT
+#define lzcnt8(x) lzcnt_lut[(x)]
 
 
+//===========================================================================
 // SATURATED SUBTRACT
-inline uint8_t saturated_subtract8(uint8_t a, uint8_t b){
+inline uint8_t saturated_subtract8(uint8_t a, uint8_t b)
+{
     uint8_t res = a - b;
     res &= -(res <= a);
     return res;
 }
 
 
-void gbf_decode(uint8_t *gbf80_buffer, float *flt32_buffer, unsigned int length)
+//===========================================================================
+// PREFETCH
+#ifdef USE_X86_OPT
+ #define prefetch_ptr(x) _mm_prefetch((x), _MM_HINT_T0)
+#else
+ #if (__GNUC__ >= 10)
+  #if __has_builtin(__builtin_prefetch)
+   #define prefetch_ptr(x) __builtin_prefetch((x))
+  #else
+   #define prefetch_ptr(x) {}
+  #endif
+ #else
+  #define prefetch_ptr(x) {}
+ #endif
+#endif
+
+
+//===========================================================================
+// GBF80 DECODERS
+void gbf_decode(uint8_t* __restrict gbf80_buffer, uint32_t* __restrict flt32_buffer, unsigned int length)
 {
-    size_t gbf80_offset = 0;
-    size_t flt32_offset = 0;
 
-    uint32_t *flt32 = NULL;
+ // ARM64 NEON optimized version
+ #ifdef USE_ARM64_OPT
+    unsigned int off_g = 0;
+    unsigned int off_f = 0;
 
-    uint8_t  *gbf80 = NULL;
-    uint64_t gbf80_bot64 = 0;
-    uint32_t gbf80_top16p32 = 0;
+    // Process in 8x8-bit lanes with ARM NEON
+    while (off_f + 8 <= length) {
 
-    uint8_t  gbf80_exp = 0;
+        uint64_t lo = 0;
+        uint16_t hi = 0;
+        uint32_t* out8 = flt32_buffer + off_f;
+        memcpy(&lo, gbf80_buffer + off_g, 8);
+        memcpy(&hi, gbf80_buffer + off_g + 8, 2);
 
-    // explicitly duplicated so it's obvious to the compiler
-    // and CPU's ROB that these are independent and
-    // have no data hazard
-    uint32_t t0, t1, t2, t3, t4, t5, t6, t7;
-    uint32_t e0, e1, e2, e3, e4, e5, e6, e7;
-    uint8_t  d0, d1, d2, d3, d4, d5, d6, d7;
+        uint8_t exp = (uint8_t)(hi >> 8);
 
-    unsigned int remainder = length % 8;
-    unsigned int num_full_x8 = length-remainder;
+        // extract and set signs
+        uint32_t s0 = (uint32_t)(((lo >>  8) & 1u) << 31);
+        uint32_t s1 = (uint32_t)(((lo >> 17) & 1u) << 31);
+        uint32_t s2 = (uint32_t)(((lo >> 26) & 1u) << 31);
+        uint32_t s3 = (uint32_t)(((lo >> 35) & 1u) << 31);
+        uint32_t s4 = (uint32_t)(((lo >> 44) & 1u) << 31);
+        uint32_t s5 = (uint32_t)(((lo >> 53) & 1u) << 31);
+        uint32_t s6 = (uint32_t)(((lo >> 62) & 1u) << 31);
+        uint32_t s7 = (uint32_t)(((hi >>  7) & 1u) << 31);
 
+        // set mantissas
+        uint8_t t_arr[8];
+        t_arr[0] = (uint8_t)((lo >>  0) & 0xFF);
+        t_arr[1] = (uint8_t)((lo >>  9) & 0xFF);
+        t_arr[2] = (uint8_t)((lo >> 18) & 0xFF);
+        t_arr[3] = (uint8_t)((lo >> 27) & 0xFF);
+        t_arr[4] = (uint8_t)((lo >> 36) & 0xFF);
+        t_arr[5] = (uint8_t)((lo >> 45) & 0xFF);
+        t_arr[6] = (uint8_t)((lo >> 54) & 0xFF);
+        t_arr[7] = (uint8_t)((((hi & 0x007F) << 1) | ((lo >> 63) & 1u)) & 0xFF);
 
-    // go through the bulk without having to `if` to check
-    // for final chunk (when ch%8!=0)
-    while( flt32_offset < num_full_x8 ){
+        // Load into NEON 8x8-bit vector
+        uint8x8_t t = vld1_u8(t_arr); // 1.m in 8 lanes
+        uint8x8_t expv = vdup_n_u8(exp);
 
-        // set base pointers
-        flt32 = ((uint32_t*)flt32_buffer) + flt32_offset;
-        gbf80 = gbf80_buffer + gbf80_offset;
-        memcpy(&gbf80_bot64, gbf80_buffer + gbf80_offset, 8);
-        memcpy(&gbf80_top16p32, gbf80_buffer + gbf80_offset + 8, 2);
+        // d = lzcnt
+        uint8x8_t d = vclz_u8(t);
 
-        // clear & set the signs
-        *(flt32+0) = (getbits64(&gbf80_bot64,  8,  8))<<31;
-        *(flt32+1) = (getbits64(&gbf80_bot64, 17, 17))<<31;
-        *(flt32+2) = (getbits64(&gbf80_bot64, 26, 26))<<31;
-        *(flt32+3) = (getbits64(&gbf80_bot64, 35, 35))<<31;
-        *(flt32+4) = (getbits64(&gbf80_bot64, 44, 44))<<31;
-        *(flt32+5) = (getbits64(&gbf80_bot64, 53, 53))<<31;
-        *(flt32+6) = (getbits64(&gbf80_bot64, 62, 62))<<31;
-        *(flt32+7) = (getbits32(&gbf80_top16p32,  7,  7))<<31;
+        // e = sat_sub(exp, d)
+        uint8x8_t e = vqsub_u8(expv, d);
 
-        // shared exp
-        gbf80_exp = getbits32(&gbf80_top16p32, 15, 8) & 0xFF;
+        // zero e if t==0
+        uint8x8_t d_is_8 = vceq_u8(d, vdup_n_u8(8));
+        e = vbic_u8(e, d_is_8);
 
-        // ch[0]
-        t0 = getbits64(&gbf80_bot64, 7, 0); // get 1.mantissa
-        d0 = (uint8_t) (lzcount(t0)-24); // count leading 1s
-        e0 = ((uint32_t) saturated_subtract8(gbf80_exp, d0)); // saturated subtract exps
-        e0 &= ((uint32_t) ((int32_t) -(d0 < 8)) ); // force exp=0 if t0=0
-        t0 <<= d0; // rsh up by diff
-        t0 &= 0x7F; // clear the hidden 1.
-        *(flt32+0) |= (e0<<23) | (t0<<16); // set data
+        // m = (t << d) & 0x7F
+        int8x8_t  d_s = vreinterpret_s8_u8(d);
+        uint8x8_t m8  = vshl_u8(t, d_s);
+        m8 = vand_u8(m8, vdup_n_u8(0x7F));
 
-        // ch[1]
-        t1 = getbits64(&gbf80_bot64, 16, 9);
-        d1 = (uint8_t) (lzcount(t1)-24);
-        e1 = ((uint32_t) saturated_subtract8(gbf80_exp, d1));
-        e1 &= ((uint32_t) ((int32_t) -(d1 < 8)) );
-        t1 <<= d1;
-        t1 &= 0x7F;
-        *(flt32+1) |= (e1<<23) | (t1<<16);
+        // widen to 32-bit and deposit bits
+        // out = sign<<31 | e<<23 | m<<16
+        uint16x8_t e16 = vmovl_u8(e);
+        uint16x8_t m16 = vmovl_u8(m8);
 
-        // ch[2]
-        t2 = getbits64(&gbf80_bot64, 25, 18);
-        d2 = (uint8_t) (lzcount(t2)-24);
-        e2 = ((uint32_t) saturated_subtract8(gbf80_exp, d2));
-        e2 &= ((uint32_t) ((int32_t) -(d2 < 8)) );
-        t2 <<= d2;
-        t2 &= 0x7F;
-        *(flt32+2) |= (e2<<23) | (t2<<16);
+        uint32x4_t e_lo32 = vmovl_u16(vget_low_u16(e16));
+        uint32x4_t e_hi32 = vmovl_u16(vget_high_u16(e16));
+        uint32x4_t m_lo32 = vmovl_u16(vget_low_u16(m16));
+        uint32x4_t m_hi32 = vmovl_u16(vget_high_u16(m16));
 
-        // ch[3]
-        t3 = getbits64(&gbf80_bot64, 34, 27);
-        d3 = (uint8_t) (lzcount(t3)-24);
-        e3 = ((uint32_t) saturated_subtract8(gbf80_exp, d3));
-        e3 &= ((uint32_t) ((int32_t) -(d3 < 8)) );
-        t3 <<= d3;
-        t3 &= 0x7F;
-        *(flt32+3) |= (e3<<23) | (t3<<16);
+        // shift into position
+        e_lo32 = vshlq_n_u32(e_lo32, 23);
+        e_hi32 = vshlq_n_u32(e_hi32, 23);
+        m_lo32 = vshlq_n_u32(m_lo32, 16);
+        m_hi32 = vshlq_n_u32(m_hi32, 16);
 
-        // ch[4]
-        t4 = getbits64(&gbf80_bot64, 43, 36);
-        d4 = (uint8_t) (lzcount(t4)-24);
-        e4 = ((uint32_t) saturated_subtract8(gbf80_exp, d4));
-        e4 &= ((uint32_t) ((int32_t) -(d4 < 8)) );
-        t4 <<= d4;
-        t4 &= 0x7F;
-        *(flt32+4) |= (e4<<23) | (t4<<16);
+        // store everything but signs so far
+        uint32x4_t out_lo = vorrq_u32(e_lo32, m_lo32);
+        uint32x4_t out_hi = vorrq_u32(e_hi32, m_hi32);
+        vst1q_u32(out8 + 0, out_lo);
+        vst1q_u32(out8 + 4, out_hi);
 
-        // ch[5]
-        t5 = getbits64(&gbf80_bot64, 52, 45);
-        d5 = (uint8_t) (lzcount(t5)-24);
-        e5 = ((uint32_t) saturated_subtract8(gbf80_exp, d5));
-        e5 &= ((uint32_t) ((int32_t) -(d5 < 8)) );
-        t5 <<= d5;
-        t5 &= 0x7F;
-        *(flt32+5) |= (e5<<23) | (t5<<16);
+        // OR in sign bits
+        out8[0] |= s0;
+        out8[1] |= s1;
+        out8[2] |= s2;
+        out8[3] |= s3;
+        out8[4] |= s4;
+        out8[5] |= s5;
+        out8[6] |= s6;
+        out8[7] |= s7;
 
-        // ch[6]
-        t6 = getbits64(&gbf80_bot64, 61, 54);
-        d6 = (uint8_t) (lzcount(t6)-24);
-        e6 = ((uint32_t) saturated_subtract8(gbf80_exp, d6));
-        e6 &= ((uint32_t) ((int32_t) -(d6 < 8)) );
-        t6 <<= d6;
-        t6 &= 0x7F;
-        *(flt32+6) |= (e6<<23) | (t6<<16);
+        // bump the offsets
+        off_f += 8;
+        off_g += 10;
 
-        // ch[7]
-        t7 = ((*(gbf80+7) & 0x80)>>7) | ((*(gbf80+8) & 0x7F)<<1);
-        d7 = (uint8_t) (lzcount(t7)-24);
-        e7 = ((uint32_t) saturated_subtract8(gbf80_exp, d7));
-        e7 &= ((uint32_t) ((int32_t) -(d7 < 8)) );
-        t7 <<= d7;
-        t7 &= 0x7F;
-        *(flt32+7) |= (e7<<23) | (t7<<16);
-
-
-        // increment counters and stuff
-        flt32_offset += 8;
-        gbf80_offset += 10;
+        // trigger prefetch
+        __builtin_prefetch(gbf80_buffer + off_g, 0, 3); // prefetch for read
+        __builtin_prefetch(flt32_buffer + off_f, 1, 3); // prefetch for write
     }
 
-    // now the final bunch (if not %8)
-    // this is slow due to the branches!
-    if(remainder > 0){
-        // set base pointers
-        flt32 = ((uint32_t*)flt32_buffer) + flt32_offset;
-        gbf80 = gbf80_buffer + gbf80_offset;
-        memcpy(&gbf80_bot64, gbf80_buffer + gbf80_offset, 8);
-        memcpy(&gbf80_top16p32, gbf80_buffer + gbf80_offset + 8, 2);
-
-        // shared exp
-        gbf80_exp = getbits32(&gbf80_top16p32, 15, 8) & 0xFF;
-
-        // ch[0]  (remainder >= 1)
-        *(flt32+0) = (getbits64(&gbf80_bot64,  8,  8))<<31;
-        t0 = getbits64(&gbf80_bot64, 7, 0); // get 1.mantissa
-        d0 = (uint8_t) (lzcount(t0)-24); // count leading 1s
-        e0 = ((uint32_t) saturated_subtract8(gbf80_exp, d0)); // saturated subtract exps
-        e0 &= ((uint32_t) ((int32_t) -(d0 < 8)) ); // force exp=0 if t0=0
-        t0 <<= d0; // rsh up by diff
-        t0 &= 0x7F; // clear the hidden 1.
-        *(flt32+0) |= (e0<<23) | (t0<<16); // set data
-
-        if(remainder >= 2){
-            // ch[1]
-            *(flt32+1) = (getbits64(&gbf80_bot64, 17, 17))<<31;
-            t1 = getbits64(&gbf80_bot64, 16, 9);
-            d1 = (uint8_t) (lzcount(t1)-24);
-            e1 = ((uint32_t) saturated_subtract8(gbf80_exp, d1));
-            e1 &= ((uint32_t) ((int32_t) -(d1 < 8)) );
-            t1 <<= d1;
-            t1 &= 0x7F;
-            *(flt32+1) |= (e1<<23) | (t1<<16);
-
-            if(remainder >= 3){
-                // ch[2]
-                *(flt32+2) = (getbits64(&gbf80_bot64, 26, 26))<<31;
-                t2 = getbits64(&gbf80_bot64, 25, 18);
-                d2 = (uint8_t) (lzcount(t2)-24);
-                e2 = ((uint32_t) saturated_subtract8(gbf80_exp, d2));
-                e2 &= ((uint32_t) ((int32_t) -(d2 < 8)) );
-                t2 <<= d2;
-                t2 &= 0x7F;
-                *(flt32+2) |= (e2<<23) | (t2<<16);
-
-                if(remainder >= 4){
-                    // ch[3]
-                    *(flt32+3) = (getbits64(&gbf80_bot64, 35, 35))<<31;
-                    t3 = getbits64(&gbf80_bot64, 34, 27);
-                    d3 = (uint8_t) (lzcount(t3)-24);
-                    e3 = ((uint32_t) saturated_subtract8(gbf80_exp, d3));
-                    e3 &= ((uint32_t) ((int32_t) -(d3 < 8)) );
-                    t3 <<= d3;
-                    t3 &= 0x7F;
-                    *(flt32+3) |= (e3<<23) | (t3<<16);
-
-                    if(remainder >= 5){
-                        // ch[4]
-                        *(flt32+4) = (getbits64(&gbf80_bot64, 44, 44))<<31;
-                        t4 = getbits64(&gbf80_bot64, 43, 36);
-                        d4 = (uint8_t) (lzcount(t4)-24);
-                        e4 = ((uint32_t) saturated_subtract8(gbf80_exp, d4));
-                        e4 &= ((uint32_t) ((int32_t) -(d4 < 8)) );
-                        t4 <<= d4;
-                        t4 &= 0x7F;
-                        *(flt32+4) |= (e4<<23) | (t4<<16);
-
-                        if(remainder >= 6){
-                            // ch[5]
-                            *(flt32+5) = (getbits64(&gbf80_bot64, 53, 53))<<31;
-                            t5 = getbits64(&gbf80_bot64, 52, 45);
-                            d5 = (uint8_t) (lzcount(t5)-24);
-                            e5 = ((uint32_t) saturated_subtract8(gbf80_exp, d5));
-                            e5 &= ((uint32_t) ((int32_t) -(d5 < 8)) );
-                            t5 <<= d5;
-                            t5 &= 0x7F;
-                            *(flt32+5) |= (e5<<23) | (t5<<16);
-
-                            if(remainder == 7){
-
-                                // ch[6]
-                                *(flt32+6) = (getbits64(&gbf80_bot64, 62, 62))<<31;
-                                t6 = getbits64(&gbf80_bot64, 61, 54);
-                                d6 = (uint8_t) (lzcount(t6)-24);
-                                e6 = ((uint32_t) saturated_subtract8(gbf80_exp, d6));
-                                e6 &= ((uint32_t) ((int32_t) -(d6 < 8)) );
-                                t6 <<= d6;
-                                t6 &= 0x7F;
-                                *(flt32+6) |= (e6<<23) | (t6<<16);
-
-                                // IMPOSSIBLE to get remainder >= 8!!!
-                            }// 7
-                        }// 6
-                    }// 5
-                }// 4
-            }// 3
-        }// 2
-
-        // increment counters and stuff
-        flt32_offset += remainder;
-        gbf80_offset += 10;
+    // tail cases for num elems %8!=0
+    if (off_f < length) {
+        uint32_t tmp[8] = {0};
+        gbf_decode(gbf80_buffer + off_g, tmp, 8);
+        for (unsigned r = 0; off_f + r < length; ++r){
+            flt32_buffer[off_f + r] = tmp[r];
+        }
     }
+
+ #else
+  #ifdef USE_X86_OPT
+
+    // masks to extract 7 mantissa bytes and 7 sign bits from the low 64 bits
+    // mantissas at [9k .. 9k+7], signs at bit (9k+8), k=0..6
+    static const uint64_t MANT_MASK =
+        (0xFFull<<0) | (0xFFull<<9) | (0xFFull<<18) |
+        (0xFFull<<27)| (0xFFull<<36)| (0xFFull<<45)|
+        (0xFFull<<54);
+
+    static const uint64_t SIGN_MASK =
+        (1ull<<8) | (1ull<<17) | (1ull<<26) |
+        (1ull<<35)| (1ull<<44)| (1ull<<53)|
+        (1ull<<62);
+
+    // nibble lz table for 4-bit leading zeros: idx 0..15
+    const __m128i LZ4 = _mm_setr_epi8(
+        4,3,2,2,1,1,1,1, 0,0,0,0,0,0,0,0
+    );
+    const __m128i V4   = _mm_set1_epi8(4);
+    const __m128i V8   = _mm_set1_epi8(8);
+    const __m128i Z128 = _mm_setzero_si128();
+
+    // pow2 table for (1 << d) as 16-bit (lo/hi bytes shufflable with PSHUFB)
+    // indices 0..8 are used; 9..15 are zero
+    const __m128i POW2_LO = _mm_setr_epi8(
+        1,2,4,8,16,32,64,(char)128, 0,0,0,0,0,0,0,0
+    );
+    const __m128i POW2_HI = _mm_setr_epi8(
+        0,0,0,0,0,0,0,1, 0,0,0,0,0,0,0,0
+    );
+    const __m128i MASK7_16 = _mm_set1_epi16(0x007F);
+
+    size_t off_g = 0;
+    size_t off_f = 0;
+
+    // main loop: 8 outputs per 10-byte packet
+    while (off_f + 8 <= length) {
+        const uint8_t* in = gbf80_buffer + off_g;
+
+        // load the 80-bit packet as lo64 + hi16
+        uint64_t lo; memcpy(&lo, in,   8);
+        uint16_t hi; memcpy(&hi, in+8, 2);
+
+        // shared exponent
+        const uint8_t exp = (uint8_t)(hi >> 8);
+
+        // ---- extract mantissa bytes ----
+        // 7 consecutive bytes (t0..t6) packed by PEXT in order
+        const uint64_t mant56 = _pext_u64(lo, MANT_MASK);
+
+        // t7 spans lo bit63 (LSB) and in[8][6:0] (MSBs)
+        const uint8_t t7 = (uint8_t)(( (in[8] & 0x7Fu) << 1 ) | ((lo >> 63) & 1u));
+
+        // assemble 8 mantissa bytes into an XMM
+        __m128i TM = _mm_cvtsi64_si128((long long)mant56); // t0..t6 in bytes 0..6
+        TM = _mm_insert_epi8(TM, t7, 7);
+
+        // ---- extract sign bits ----
+        const unsigned s7bits = (unsigned)_pext_u64(lo, SIGN_MASK); // s0..s6 in bits 0..6
+        uint8_t sbytes_arr[8];
+        sbytes_arr[0] = (uint8_t)((s7bits >> 0) & 1);
+        sbytes_arr[1] = (uint8_t)((s7bits >> 1) & 1);
+        sbytes_arr[2] = (uint8_t)((s7bits >> 2) & 1);
+        sbytes_arr[3] = (uint8_t)((s7bits >> 3) & 1);
+        sbytes_arr[4] = (uint8_t)((s7bits >> 4) & 1);
+        sbytes_arr[5] = (uint8_t)((s7bits >> 5) & 1);
+        sbytes_arr[6] = (uint8_t)((s7bits >> 6) & 1);
+        sbytes_arr[7] = (uint8_t)((hi >> 7) & 1);
+        __m128i SB = _mm_loadl_epi64((const __m128i*)sbytes_arr); // 8 sign bytes (0/1)
+
+        // ---- compute d = lzcnt8(t) ----
+        // hi/lo nibbles
+        __m128i hi_nib = _mm_and_si128(_mm_srli_epi16(TM, 4), _mm_set1_epi8(0x0F));
+        __m128i lo_nib = _mm_and_si128(TM,                     _mm_set1_epi8(0x0F));
+
+        // lz4 lookups
+        __m128i lz_hi = _mm_shuffle_epi8(LZ4, hi_nib);
+        __m128i lz_lo = _mm_shuffle_epi8(LZ4, lo_nib);
+
+        // if hi_nib != 0 -> d = lz_hi else 4 + lz_lo
+        __m128i mask_hi_nz = _mm_cmpgt_epi8(hi_nib, Z128);
+        __m128i d_from_lo  = _mm_add_epi8(V4, lz_lo);
+        __m128i D          = _mm_blendv_epi8(d_from_lo, lz_hi, mask_hi_nz);
+
+        // if t==0 -> d = 8
+        __m128i mask_t_zero = _mm_cmpeq_epi8(TM, Z128);
+        D = _mm_blendv_epi8(D, V8, mask_t_zero); // D in 0..8
+
+        // ---- exponent: e = sat_sub(exp, d); zero if d==8 ----
+        __m128i EXP8 = _mm_set1_epi8((char)exp);
+        __m128i E8   = _mm_subs_epu8(EXP8, D);
+        __m128i mask_d_eq8 = _mm_cmpeq_epi8(D, V8);
+        E8 = _mm_andnot_si128(mask_d_eq8, E8); // zero out when d==8
+
+        // ---- mantissa: m = ((t << d) & 0x7F) ----
+        // factor = (1<<d) as 16-bit via PSHUFB tables
+        __m128i fac_lo = _mm_shuffle_epi8(POW2_LO, D);
+        __m128i fac_hi = _mm_shuffle_epi8(POW2_HI, D);
+        __m128i FAC16  = _mm_unpacklo_epi8(fac_lo, fac_hi); // 8x u16
+
+        // widen t to u16, multiply, mask to 7 bits
+        __m128i T16 = _mm_cvtepu8_epi16(TM);
+        __m128i M16 = _mm_mullo_epi16(T16, FAC16);
+        M16 = _mm_and_si128(M16, MASK7_16);
+
+        // ---- widen to 32-bit lanes ----
+        __m256i M32  = _mm256_cvtepu16_epi32(M16);                // m
+        M32          = _mm256_slli_epi32(M32, 16);                // m << 16
+
+        __m256i E32  = _mm256_cvtepu8_epi32(E8);                  // e
+        E32          = _mm256_slli_epi32(E32, 23);                // e << 23
+
+        __m256i S32  = _mm256_cvtepu8_epi32(SB);                  // sign (0/1)
+        S32          = _mm256_slli_epi32(S32, 31);                // sign << 31
+
+        __m256i OUT  = _mm256_or_si256(S32, _mm256_or_si256(E32, M32));
+
+        // store 8 results
+        _mm256_storeu_si256((__m256i*)(flt32_buffer + off_f), OUT);
+
+        // advance
+        off_f += 8;
+        off_g += 10;
+
+        // prefetch next
+        _mm_prefetch((const char*)(gbf80_buffer + off_g), _MM_HINT_T0);
+        _mm_prefetch((const char*)(flt32_buffer + off_f), _MM_HINT_T0);
+    }
+
+
+    // tail (0..7)
+    if (off_f < length) {
+        uint32_t tmp[8] = {0};
+        gbf_decode(gbf80_buffer + off_g, tmp, 8);  // reuse same function; first branch will hit fast path
+        for (unsigned r = 0; off_f + r < length; ++r) flt32_buffer[off_f + r] = tmp[r];
+    }
+
+  #else
+    // RISC-V, and other architectures
+
+    size_t off_f = 0, off_g = 0;
+
+    while (off_f + 8 <= length) {
+        const uint8_t* in = gbf80_buffer + off_g;
+
+        uint64_t lo = 0;
+        uint16_t hi = 0;
+        memcpy(&lo, in, 8);
+        memcpy(&hi, in+8, 2);
+
+        uint8_t exp = (uint8_t)(hi >> 8);
+
+        // signs
+        uint32_t out0 = (uint32_t)(((lo >>  8) & 1u) << 31);
+        uint32_t out1 = (uint32_t)(((lo >> 17) & 1u) << 31);
+        uint32_t out2 = (uint32_t)(((lo >> 26) & 1u) << 31);
+        uint32_t out3 = (uint32_t)(((lo >> 35) & 1u) << 31);
+        uint32_t out4 = (uint32_t)(((lo >> 44) & 1u) << 31);
+        uint32_t out5 = (uint32_t)(((lo >> 53) & 1u) << 31);
+        uint32_t out6 = (uint32_t)(((lo >> 62) & 1u) << 31);
+        uint32_t out7 = (uint32_t)(((hi >>  7) & 1u) << 31);
+
+        // mantissas (8b 1.m)
+        uint8_t t0 = (uint8_t)((lo >>  0) & 0xFF);
+        uint8_t t1 = (uint8_t)((lo >>  9) & 0xFF);
+        uint8_t t2 = (uint8_t)((lo >> 18) & 0xFF);
+        uint8_t t3 = (uint8_t)((lo >> 27) & 0xFF);
+        uint8_t t4 = (uint8_t)((lo >> 36) & 0xFF);
+        uint8_t t5 = (uint8_t)((lo >> 45) & 0xFF);
+        uint8_t t6 = (uint8_t)((lo >> 54) & 0xFF);
+        uint8_t t7 = (uint8_t)((((hi & 0x007F) << 1) | ((lo >> 63) & 1u)) & 0xFF);
+
+        // d = leading zeros in 8 bits (t==0 -> 8)
+        uint8_t d0 = lzcnt8(t0);
+        uint8_t d1 = lzcnt8(t1);
+        uint8_t d2 = lzcnt8(t2);
+        uint8_t d3 = lzcnt8(t3);
+        uint8_t d4 = lzcnt8(t4);
+        uint8_t d5 = lzcnt8(t5);
+        uint8_t d6 = lzcnt8(t6);
+        uint8_t d7 = lzcnt8(t7);
+
+        // e = sat_sub(exp, d) ; if d==8 (t==0) => exp becomes 0
+        uint32_t e0 = saturated_subtract8(exp, d0) & -(uint32_t)(d0 < 8);
+        uint32_t e1 = saturated_subtract8(exp, d1) & -(uint32_t)(d1 < 8);
+        uint32_t e2 = saturated_subtract8(exp, d2) & -(uint32_t)(d2 < 8);
+        uint32_t e3 = saturated_subtract8(exp, d3) & -(uint32_t)(d3 < 8);
+        uint32_t e4 = saturated_subtract8(exp, d4) & -(uint32_t)(d4 < 8);
+        uint32_t e5 = saturated_subtract8(exp, d5) & -(uint32_t)(d5 < 8);
+        uint32_t e6 = saturated_subtract8(exp, d6) & -(uint32_t)(d6 < 8);
+        uint32_t e7 = saturated_subtract8(exp, d7) & -(uint32_t)(d7 < 8);
+
+        // shift/clear hidden 1
+        uint32_t m0 = ((uint32_t)(t0 << d0)) & 0x7F;
+        uint32_t m1 = ((uint32_t)(t1 << d1)) & 0x7F;
+        uint32_t m2 = ((uint32_t)(t2 << d2)) & 0x7F;
+        uint32_t m3 = ((uint32_t)(t3 << d3)) & 0x7F;
+        uint32_t m4 = ((uint32_t)(t4 << d4)) & 0x7F;
+        uint32_t m5 = ((uint32_t)(t5 << d5)) & 0x7F;
+        uint32_t m6 = ((uint32_t)(t6 << d6)) & 0x7F;
+        uint32_t m7 = ((uint32_t)(t7 << d7)) & 0x7F;
+
+        // set the final float vals
+        flt32_buffer[off_f+0] = out0 | (e0<<23) | (m0<<16);
+        flt32_buffer[off_f+1] = out1 | (e1<<23) | (m1<<16);
+        flt32_buffer[off_f+2] = out2 | (e2<<23) | (m2<<16);
+        flt32_buffer[off_f+3] = out3 | (e3<<23) | (m3<<16);
+        flt32_buffer[off_f+4] = out4 | (e4<<23) | (m4<<16);
+        flt32_buffer[off_f+5] = out5 | (e5<<23) | (m5<<16);
+        flt32_buffer[off_f+6] = out6 | (e6<<23) | (m6<<16);
+        flt32_buffer[off_f+7] = out7 | (e7<<23) | (m7<<16);
+
+        // bump the offsets
+        off_f += 8;
+        off_g += 10;
+
+        // trigger prefetch
+        prefetch_ptr((const char*)(gbf80_buffer + off_g));
+        prefetch_ptr((const char*)(flt32_buffer + off_f));
+    }
+
+    // tail cases for num elems %8!=0
+    if (off_f < length) {
+        uint32_t tmp[8] = {0};
+        gbf_decode(gbf80_buffer + off_g, tmp, 8);
+        for (unsigned r = 0; off_f + r < length; ++r){
+            flt32_buffer[off_f + r] = tmp[r];
+        }
+    }
+
+  #endif // USE_X86_OPT
+ #endif // USE_ARM64_OPT
+
 }
 
 
-// actual conversions
 
-void convert_gbf(float *src, uint8_t *dst, int tensor_size, int num_ch){
+
+// actual conversions
+//-------------------------------------------------------------------------------------------------//
+void convert_gbf(uint32_t* __restrict src, uint8_t* __restrict dst, int tensor_size, int num_ch){
     int  num_xyz_pixels = (tensor_size / num_ch);
     int  num_gbf_per_pixel = (num_ch / 8) + ( ((num_ch%8)!=0) ? 1 : 0);
 
     for(int i = 0; i < num_xyz_pixels; i++){
         uint8_t *gbf_base = &(dst[ i * (num_gbf_per_pixel * 10) ]);
-        float   *flt_base = (float*) &(src[ i * num_ch ]);
+        uint32_t   *flt_base = (uint32_t*) &(src[ i * num_ch ]);
 
         gbf_encode(flt_base, gbf_base, num_ch);
     }
 }
 
-void convert_gbf_row_pad(float *src, uint8_t *dst, int height, int width, int z, int num_ch){
+void convert_gbf_row_pad(uint32_t* __restrict src, uint8_t* __restrict dst, int height, int width, int z, int num_ch){
     int num_gbf_per_pixel = (num_ch / 8) + (((num_ch%8)!=0) ? 1 : 0);
     int gbf80_pixel_size = num_gbf_per_pixel * 10;
     int gbf80_row_size = ((width * z * gbf80_pixel_size) + 3) & ~0x3;
@@ -567,7 +626,7 @@ void convert_gbf_row_pad(float *src, uint8_t *dst, int height, int width, int z,
         int flt32_pixel_offset = 0;
         for (int w_idx = 0; w_idx < width; w_idx++) {
             for (int z_idx = 0; z_idx < z; z_idx++) {
-                float *flt32_buffer = (float *)(src + flt32_row_offset + flt32_pixel_offset);
+                uint32_t *flt32_buffer = (uint32_t *)(src + flt32_row_offset + flt32_pixel_offset);
                 uint8_t *gbf80_buffer = (uint8_t *)(dst + gbf80_row_offset + gbf80_pixel_offset);
                 gbf_encode(flt32_buffer, gbf80_buffer, num_ch);
 
@@ -580,19 +639,19 @@ void convert_gbf_row_pad(float *src, uint8_t *dst, int height, int width, int z,
     }
 }
 
-void unconvert_gbf(uint8_t *src, float *dst, int tensor_size, int num_ch){
-    int  num_xyz_pixels = (tensor_size / num_ch);
-    int  num_gbf_per_pixel = (num_ch / 8) + ( ((num_ch%8)!=0) ? 1 : 0);
+void unconvert_gbf(uint8_t* __restrict src, uint32_t* __restrict dst, int tensor_size, int num_ch){
+    int num_xyz_pixels = (tensor_size / num_ch);
+    int num_gbf_per_pixel = (num_ch / 8) + ( ((num_ch%8)!=0) ? 1 : 0);
 
     for(int i = 0; i < num_xyz_pixels; i++){
         uint8_t *gbf_base = &(src[ i * (num_gbf_per_pixel * 10) ]);
-        float   *flt_base = (float*) &(dst[ i * num_ch ]);
+        uint32_t *flt_base = (uint32_t*) &(dst[ i * num_ch ]);
 
         gbf_decode(gbf_base, flt_base, num_ch);
     }
 }
 
-void unconvert_gbf_hpoc(uint8_t *src, float *dst, int height, int width, int z, int num_ch, int hpoc_size, int *hpoc_indexes, int row_pad) {
+void unconvert_gbf_hpoc(uint8_t* __restrict src, uint32_t* __restrict dst, int height, int width, int z, int num_ch, int hpoc_size, int *hpoc_indexes, int row_pad) {
     int num_gbf_ch = num_ch + hpoc_size;
     int num_gbf_per_pixel = (num_gbf_ch / 8) + (((num_gbf_ch%8)!=0) ? 1 : 0);
     int gbf80_pixel_size = num_gbf_per_pixel * 10;
@@ -615,8 +674,9 @@ void unconvert_gbf_hpoc(uint8_t *src, float *dst, int height, int width, int z, 
                 int check_dummy_ch_idx = 0;
                 // decode for each buf of GBF pixel
                 for (int gbf_ch_idx = 0, gbf_buf_offset = 0, flt32_buf_offset = 0; gbf_ch_idx < num_gbf_ch; gbf_ch_idx += 8, gbf_buf_offset += 10) {
-                    float decode_float_buf[8] = {0};
+                    uint32_t decode_float_buf[8] = {0};
                     uint8_t *gbf80_buffer = (uint8_t *)(src + gbf80_row_offset + gbf80_pixel_offset + gbf_buf_offset);
+
                     gbf_decode(gbf80_buffer, decode_float_buf, 8);
 
                     for (int ch_offset = 0; ch_offset < 8; ++ch_offset) {
@@ -629,7 +689,7 @@ void unconvert_gbf_hpoc(uint8_t *src, float *dst, int height, int width, int z, 
                         } else {
                             // update target channel data of FP32 pixel
                             if (gbf_ch_idx + ch_offset < num_gbf_ch) {
-                                float *flt32_buffer = (float *)(dst + flt32_row_offset + flt32_pixel_offset + flt32_buf_offset);
+                                uint32_t *flt32_buffer = (uint32_t *)(dst + flt32_row_offset + flt32_pixel_offset + flt32_buf_offset);
                                 *flt32_buffer = decode_float_buf[ch_offset];
                                 flt32_buf_offset++;
                             }
@@ -645,7 +705,7 @@ void unconvert_gbf_hpoc(uint8_t *src, float *dst, int height, int width, int z, 
     }/* h */
 }
 
-void unconvert_gbf_row_pad(uint8_t *src, float *dst, int height, int width, int z, int num_ch) {
+void unconvert_gbf_row_pad(uint8_t* __restrict src, uint32_t* __restrict dst, int height, int width, int z, int num_ch) {
     int num_gbf_per_pixel = (num_ch / 8) + (((num_ch%8)!=0) ? 1 : 0);
     int gbf80_pixel_size = num_gbf_per_pixel * 10;
     int gbf80_row_size = ((width * z * gbf80_pixel_size) + 3) & ~0x3;
@@ -659,7 +719,7 @@ void unconvert_gbf_row_pad(uint8_t *src, float *dst, int height, int width, int 
         for (int w_idx = 0; w_idx < width; w_idx++) {
             for (int z_idx = 0; z_idx < z; z_idx++) {
                 uint8_t *gbf80_buffer = (uint8_t *)(src + gbf80_row_offset + gbf80_pixel_offset);
-                float *flt32_buffer = (float *)(dst + flt32_row_offset + flt32_pixel_offset);
+                uint32_t *flt32_buffer = (uint32_t *)(dst + flt32_row_offset + flt32_pixel_offset);
                 gbf_decode(gbf80_buffer, flt32_buffer, num_ch);
 
                 gbf80_pixel_offset += gbf80_pixel_size;
@@ -671,19 +731,83 @@ void unconvert_gbf_row_pad(uint8_t *src, float *dst, int height, int width, int 
     }
 }
 
-void convert_bf16(float *src, uint8_t *dst, int tensor_size){
-    uint32_t *fp_uint32 = (uint32_t*) src;
-    for(int i = 0; i < tensor_size; i++){
-        uint32_t v = fp_uint32[i] + 0x00008000;
-        memcpy(&(dst[i*2]), ((uint8_t*) &v)+2, 2);
+void convert_bf16(uint32_t* __restrict src, uint8_t* __restrict dst, int tensor_size){
+
+    const int n = tensor_size;
+    uint16_t* __restrict dst16 = (uint16_t*)dst;
+
+  #ifdef USE_X86_OPT
+
+    const __m256i add = _mm256_set1_epi32(0x00008000u);
+    int i = 0;
+    for (; i + 16 <= n; i += 16) {
+        __m256i a0 = _mm256_loadu_si256((const __m256i*)(src + i));
+        __m256i a1 = _mm256_loadu_si256((const __m256i*)(src + i + 8));
+        a0 = _mm256_add_epi32(a0, add);
+        a1 = _mm256_add_epi32(a1, add);
+        a0 = _mm256_srli_epi32(a0, 16);
+        a1 = _mm256_srli_epi32(a1, 16);
+        // pack 2x 8 i32 -> 16 u16
+        __m256i packed = _mm256_packus_epi32(a0, a1);
+        // fix the shuffled up order of the vector
+        packed = _mm256_permute4x64_epi64(packed, 0xD8);
+        // store result
+        _mm256_storeu_si256((__m256i*)(dst16 + i), packed);
+    }
+    // scalar tail (<=15)
+    for (; i < n; ++i) {
+        uint32_t v = src[i] + 0x00008000u;
+        dst16[i]   = (uint16_t)(v >> 16);
+    }
+    return;
+
+  #else
+   #ifdef USE_ARM64_OPT
+
+    const uint32x4_t add = vdupq_n_u32(0x00008000u);
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        uint32x4_t a0 = vld1q_u32(src + i);
+        uint32x4_t a1 = vld1q_u32(src + i + 4);
+        a0 = vaddq_u32(a0, add);
+        a1 = vaddq_u32(a1, add);
+        a0 = vshrq_n_u32(a0, 16);
+        a1 = vshrq_n_u32(a1, 16);
+        uint16x4_t n0 = vmovn_u32(a0);
+        uint16x4_t n1 = vmovn_u32(a1);
+        uint16x8_t p  = vcombine_u16(n0, n1);
+        vst1q_u16(dst16 + i, p);
+    }
+    for (; i < n; ++i) {
+        uint32_t v = src[i] + 0x00008000u;
+        dst16[i]   = (uint16_t)(v >> 16);
+    }
+    return;
+
+   #else
+
+    // fallback: see if OpenMP-SIMD can work any magic
+    #pragma omp simd
+    for (int i = 0; i < tensor_size; ++i) {
+        uint32_t v = src[i] + 0x00008000u;
+        ((uint16_t*)dst)[i] = (uint16_t)(v >> 16);
+    }
+    return;
+
+   #endif
+  #endif
+
+}
+
+void unconvert_bf16(uint8_t* __restrict src, uint32_t* __restrict dst, int tensor_size){
+
+    uint16_t const* __restrict src16 = (const uint16_t*)src;
+
+    #pragma omp simd
+    for (int i = 0; i < tensor_size; ++i) {
+        dst[i] = (uint32_t)(src16[i]) << 16;
     }
 }
 
-void unconvert_bf16(uint8_t *src, float *dst, int tensor_size){
-    memset(dst, 0, tensor_size*sizeof(float)); // wipe data
 
-    uint16_t *bf_dat = (uint16_t*) src;
-    for(int i = 0; i < tensor_size; i++){
-        memcpy(((uint8_t*) (dst + i))+2, (uint8_t*) (bf_dat + i), 2);
-    }
-}
+#endif // CONVERT_H

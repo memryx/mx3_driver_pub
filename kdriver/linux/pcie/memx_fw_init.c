@@ -148,7 +148,7 @@ static s32 memx_download_firmware_to_sram_code_section(struct memx_pcie_dev *mem
 }
 
 #ifdef DEBUG
-static const char *get_chip_role_from_enum(memx_chip_role_t role)
+static const char *get_chip_role_from_enum(enum memx_chip_role role)
 {
 	switch (role) {
 	case ROLE_SINGLE:
@@ -303,10 +303,12 @@ s32 memx_firmware_init(struct memx_pcie_dev *memx_dev, struct memx_firmware_bin 
 	else if (ret == 1) { // QSPI boot
 		unsigned long timeout = jiffies + msecs_to_jiffies(FW_INIT_TIMEOUT_MSEC);
 		u32 sleep_ms = 100;
-    	u32 elapsed_ms = 0;
+		u32 elapsed_ms = 0;
 		u32 tick0 = memx_xflow_read(memx_dev, 0, MXCNST_FW_SYS_TICK, 0, false);
+
 		while (!time_after(jiffies, timeout)) {
 			u32 tick1 = memx_xflow_read(memx_dev, 0, MXCNST_FW_SYS_TICK, 0, false);
+
 			if (tick0 > tick1)
 				tick0 = tick1;
 			else if ((tick1 > mxmf_boot_tick) && (tick1 > tick0)) {
@@ -315,7 +317,7 @@ s32 memx_firmware_init(struct memx_pcie_dev *memx_dev, struct memx_firmware_bin 
 			}
 			pr_info("memryx: firmware_init probing: fw systick = %u -> %u < %u (%d msec elapsed)\n", tick0, tick1, mxmf_boot_tick, elapsed_ms);
 			set_current_state(TASK_INTERRUPTIBLE);
-        	schedule_timeout(msecs_to_jiffies(sleep_ms));
+			schedule_timeout(msecs_to_jiffies(sleep_ms));
 			elapsed_ms += sleep_ms;
 		}
 	}

@@ -3,7 +3,7 @@
 #include "memx_pcie.h"
 #include "memx_xflow.h"
 
-static s32 memx_xflow_basic_check(struct memx_pcie_dev *memx_dev, u8 chip_id)
+s32 memx_xflow_basic_check(struct memx_pcie_dev *memx_dev, u8 chip_id)
 {
 	if (!memx_dev || !memx_dev->pDev) {
 		pr_err("memryx: xflow_basic_check: No Opened Device!\n");
@@ -28,6 +28,12 @@ static s32 memx_xflow_basic_check(struct memx_pcie_dev *memx_dev, u8 chip_id)
 		pr_err("memryx: xflow_basic_check: chip_id(%u) invalid\n", chip_id);
 		return -ENODEV;
 	}
+	if (memx_dev->bar_mode == MEMXBAR_4BAR_BAR0VB_BAR2CI_BAR4MSIX_BAR5SRAM) {
+		if (!memx_dev->bar_info[4].iobase || !memx_dev->bar_info[4].available) {
+			pr_err("xflow_basic_check: bar_idx(4) invalid.\n");
+			return -ENODEV;
+		}
+	}
 	return 0;
 }
 
@@ -42,8 +48,24 @@ static void memx_xflow_set_access_mode(struct memx_pcie_dev *memx_dev, u8 chip_i
 		return;
 	}
 
-	control_register_addr = (_VOLATILE_ u32 *)(memx_dev->bar_info[bar_idx].iobase + GET_XFLOW_OFFSET(chip_id, true) + XFLOW_CONTROL_REGISTER_OFFSET - barmapofs);
-	*control_register_addr = access_mpu ? 0 : 1;
+	if ((chip_id == 0) || (memx_dev->bar_mode != MEMXBAR_4BAR_BAR0VB_BAR2CI_BAR4MSIX_BAR5SRAM)) {
+		control_register_addr = (_VOLATILE_ u32 *)(memx_dev->bar_info[bar_idx].iobase + GET_XFLOW_OFFSET(chip_id, true) + XFLOW_CONTROL_REGISTER_OFFSET - barmapofs);
+		*control_register_addr = access_mpu ? 0 : 1;
+	} else {
+		_VOLATILE_ u32 *indirect_base_addr_reg_addr = NULL;
+		_VOLATILE_ u32 *indirect_control_register_addr = NULL;
+		_VOLATILE_ u32 *indirect_virtual_buffer_target_address = NULL;
+		u32 vbarmapofs = memx_dev->xflow_vbuf_bar_offset;
+		u8 vbar_idx = memx_dev->xflow_vbuf_bar_idx;
+
+		indirect_base_addr_reg_addr = (_VOLATILE_ u32 *)(memx_dev->bar_info[bar_idx].iobase + GET_XFLOW_OFFSET(0, true) + XFLOW_BASE_ADDRESS_REGISTER_OFFSET - barmapofs);
+		indirect_control_register_addr = (_VOLATILE_ u32 *)(memx_dev->bar_info[bar_idx].iobase + GET_XFLOW_OFFSET(0, true) + XFLOW_CONTROL_REGISTER_OFFSET - barmapofs);
+		indirect_virtual_buffer_target_address = (_VOLATILE_ u32 *)(memx_dev->bar_info[vbar_idx].iobase + GET_XFLOW_OFFSET(0, false) - vbarmapofs);
+
+		*indirect_control_register_addr = 1;
+		*indirect_base_addr_reg_addr = MXCNST_RP_XFLOW_ADDR + GET_XFLOW_OFFSET(chip_id, true) + XFLOW_CONTROL_REGISTER_OFFSET;
+		*indirect_virtual_buffer_target_address = access_mpu ? 0 : 1;
+	}
 }
 
 static void memx_xflow_set_base_address(struct memx_pcie_dev *memx_dev, u8 chip_id, u32 base_addr)
@@ -57,8 +79,24 @@ static void memx_xflow_set_base_address(struct memx_pcie_dev *memx_dev, u8 chip_
 		return;
 	}
 
-	base_addr_reg_addr = (_VOLATILE_ u32 *)(memx_dev->bar_info[bar_idx].iobase + GET_XFLOW_OFFSET(chip_id, true) + XFLOW_BASE_ADDRESS_REGISTER_OFFSET - barmapofs);
-	*base_addr_reg_addr = base_addr;
+	if ((chip_id == 0) || (memx_dev->bar_mode != MEMXBAR_4BAR_BAR0VB_BAR2CI_BAR4MSIX_BAR5SRAM)) {
+		base_addr_reg_addr = (_VOLATILE_ u32 *)(memx_dev->bar_info[bar_idx].iobase + GET_XFLOW_OFFSET(chip_id, true) + XFLOW_BASE_ADDRESS_REGISTER_OFFSET - barmapofs);
+		*base_addr_reg_addr = base_addr;
+	} else {
+		_VOLATILE_ u32 *indirect_base_addr_reg_addr = NULL;
+		_VOLATILE_ u32 *indirect_control_register_addr = NULL;
+		_VOLATILE_ u32 *indirect_virtual_buffer_target_address = NULL;
+		u32 vbarmapofs = memx_dev->xflow_vbuf_bar_offset;
+		u8 vbar_idx = memx_dev->xflow_vbuf_bar_idx;
+
+		indirect_base_addr_reg_addr = (_VOLATILE_ u32 *)(memx_dev->bar_info[bar_idx].iobase + GET_XFLOW_OFFSET(0, true) + XFLOW_BASE_ADDRESS_REGISTER_OFFSET - barmapofs);
+		indirect_control_register_addr = (_VOLATILE_ u32 *)(memx_dev->bar_info[bar_idx].iobase + GET_XFLOW_OFFSET(0, true) + XFLOW_CONTROL_REGISTER_OFFSET - barmapofs);
+		indirect_virtual_buffer_target_address = (_VOLATILE_ u32 *)(memx_dev->bar_info[vbar_idx].iobase + GET_XFLOW_OFFSET(0, false) - vbarmapofs);
+
+		*indirect_control_register_addr = 1;
+		*indirect_base_addr_reg_addr = MXCNST_RP_XFLOW_ADDR + GET_XFLOW_OFFSET(chip_id, true) + XFLOW_BASE_ADDRESS_REGISTER_OFFSET;
+		*indirect_virtual_buffer_target_address = base_addr;
+	}
 }
 
 static void memx_xflow_write_virtual_buffer_address(struct memx_pcie_dev *memx_dev, u8 chip_id, u32 base_addr_offset, u32 value)
@@ -72,8 +110,25 @@ static void memx_xflow_write_virtual_buffer_address(struct memx_pcie_dev *memx_d
 		return;
 	}
 
-	virtual_buffer_target_address = (_VOLATILE_ u32 *)(memx_dev->bar_info[bar_idx].iobase + GET_XFLOW_OFFSET(chip_id, false) + base_addr_offset - barmapofs);
-	*virtual_buffer_target_address = value;
+	if ((chip_id == 0) || (memx_dev->bar_mode != MEMXBAR_4BAR_BAR0VB_BAR2CI_BAR4MSIX_BAR5SRAM)) {
+		virtual_buffer_target_address = (_VOLATILE_ u32 *)(memx_dev->bar_info[bar_idx].iobase + GET_XFLOW_OFFSET(chip_id, false) + base_addr_offset - barmapofs);
+		*virtual_buffer_target_address = value;
+	} else {
+		_VOLATILE_ u32 *indirect_base_addr_reg_addr = NULL;
+		_VOLATILE_ u32 *indirect_control_register_addr = NULL;
+		_VOLATILE_ u32 *indirect_virtual_buffer_target_address = NULL;
+		u32 cbarmapofs = memx_dev->xflow_conf_bar_offset;
+		u8 cbar_idx = memx_dev->xflow_conf_bar_idx;
+
+		indirect_base_addr_reg_addr = (_VOLATILE_ u32 *)(memx_dev->bar_info[cbar_idx].iobase + GET_XFLOW_OFFSET(0, true) + XFLOW_BASE_ADDRESS_REGISTER_OFFSET - cbarmapofs);
+		indirect_control_register_addr = (_VOLATILE_ u32 *)(memx_dev->bar_info[cbar_idx].iobase + GET_XFLOW_OFFSET(0, true) + XFLOW_CONTROL_REGISTER_OFFSET - cbarmapofs);
+		indirect_virtual_buffer_target_address = (_VOLATILE_ u32 *)(memx_dev->bar_info[bar_idx].iobase + GET_XFLOW_OFFSET(0, false) + base_addr_offset - barmapofs);
+
+		*indirect_control_register_addr = 1;
+		*indirect_base_addr_reg_addr = MXCNST_RP_XFLOW_ADDR + GET_XFLOW_OFFSET(chip_id, false);
+		*indirect_virtual_buffer_target_address = value;
+	}
+
 }
 
 static u32 memx_xflow_read_virtual_buffer_address(struct memx_pcie_dev *memx_dev, u8 chip_id, u32 base_addr_offset)
@@ -88,8 +143,24 @@ static u32 memx_xflow_read_virtual_buffer_address(struct memx_pcie_dev *memx_dev
 		return 0;
 	}
 
-	virtual_buffer_target_address = (_VOLATILE_ u32 *)(memx_dev->bar_info[bar_idx].iobase + GET_XFLOW_OFFSET(chip_id, false) + base_addr_offset - barmapofs);
-	result = *virtual_buffer_target_address;
+	if ((chip_id == 0) || (memx_dev->bar_mode != MEMXBAR_4BAR_BAR0VB_BAR2CI_BAR4MSIX_BAR5SRAM)) {
+		virtual_buffer_target_address = (_VOLATILE_ u32 *)(memx_dev->bar_info[bar_idx].iobase + GET_XFLOW_OFFSET(chip_id, false) + base_addr_offset - barmapofs);
+		result = *virtual_buffer_target_address;
+	} else {
+		_VOLATILE_ u32 *indirect_base_addr_reg_addr = NULL;
+		_VOLATILE_ u32 *indirect_control_register_addr = NULL;
+		_VOLATILE_ u32 *indirect_virtual_buffer_target_address = NULL;
+		u32 cbarmapofs = memx_dev->xflow_conf_bar_offset;
+		u8 cbar_idx = memx_dev->xflow_conf_bar_idx;
+
+		indirect_base_addr_reg_addr = (_VOLATILE_ u32 *)(memx_dev->bar_info[cbar_idx].iobase + GET_XFLOW_OFFSET(0, true) + XFLOW_BASE_ADDRESS_REGISTER_OFFSET - cbarmapofs);
+		indirect_control_register_addr = (_VOLATILE_ u32 *)(memx_dev->bar_info[cbar_idx].iobase + GET_XFLOW_OFFSET(0, true) + XFLOW_CONTROL_REGISTER_OFFSET - cbarmapofs);
+		indirect_virtual_buffer_target_address = (_VOLATILE_ u32 *)(memx_dev->bar_info[bar_idx].iobase + GET_XFLOW_OFFSET(0, false) + base_addr_offset - barmapofs);
+
+		*indirect_control_register_addr = 1;
+		*indirect_base_addr_reg_addr = MXCNST_RP_XFLOW_ADDR + GET_XFLOW_OFFSET(chip_id, false);
+		result = *indirect_virtual_buffer_target_address;
+	}
 	return result;
 }
 
@@ -132,6 +203,9 @@ void memx_xflow_write(struct memx_pcie_dev *memx_dev, u8 chip_id, u32 base_addr,
 		memx_xflow_write_virtual_buffer_address(memx_dev, chip_id, base_addr_offset, value);
 		if (!access_mpu)
 			memx_xflow_set_access_mode(memx_dev, chip_id, true);
+
+		if (((memx_dev->bar_mode == MEMXBAR_4BAR_BAR0VB_BAR2CI_BAR4MSIX_BAR5SRAM)) && (chip_id > 0))
+			memx_xflow_set_access_mode(memx_dev, 0, true);
 	}
 }
 
@@ -171,40 +245,11 @@ u32 memx_xflow_read(struct memx_pcie_dev *memx_dev, u8 chip_id, u32 base_addr, u
 		result = memx_xflow_read_virtual_buffer_address(memx_dev, chip_id, base_addr_offset);
 		if (!access_mpu)
 			memx_xflow_set_access_mode(memx_dev, chip_id, true);
+
+		if (((memx_dev->bar_mode == MEMXBAR_4BAR_BAR0VB_BAR2CI_BAR4MSIX_BAR5SRAM)) && (chip_id > 0))
+			memx_xflow_set_access_mode(memx_dev, 0, true);
 	}
 	return result;
-}
-
-void memx_xflow_trigger_mpu_sw_irq(struct memx_pcie_dev *memx_dev, u8 chip_id, enum xflow_mpu_sw_irq_idx sw_irq_idx)
-{
-	u32 write_value = 0;
-
-	if (memx_xflow_basic_check(memx_dev, chip_id)) {
-		pr_err("memryx: xflow_trigger_mpu_sw_irq: basic check failed\n");
-		return;
-	}
-
-	switch (sw_irq_idx) {
-	case reset_device_idx_3:
-		write_value = (0x1 << reset_device_idx_3);
-	break;
-	case fw_cmd_idx_4:
-		write_value = (0x1 << fw_cmd_idx_4);
-	break;
-	case move_sram_data_to_di_port_idx_5:
-		write_value = (0x1 << move_sram_data_to_di_port_idx_5);
-	break;
-	case init_wtmem_and_fmem_idx_6:
-		write_value = (0x1 << init_wtmem_and_fmem_idx_6);
-	break;
-	case reset_mpu_idx_7:
-		write_value = (0x1 << reset_mpu_idx_7);
-	break;
-	default:
-		pr_err("memryx: Invalid sw_irq_idx(%u), it should not be used\n", sw_irq_idx);
-		return;
-	}
-	memx_xflow_write(memx_dev, chip_id, AHB_HUB_IRQ_EN_BASE, 0x0, write_value, true);
 }
 
 void memx_sram_write(struct memx_pcie_dev *memx_dev, u32 base_addr, u32 value)

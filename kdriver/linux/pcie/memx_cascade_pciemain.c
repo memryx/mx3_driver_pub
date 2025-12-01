@@ -6,7 +6,6 @@
 #include <linux/time.h>
 #include "memx_pcie.h"
 #include "memx_pcie_dev_list_ctrl.h"
-#include "memx_xflow.h"
 #include "memx_fw_cmd.h"
 #include "memx_fw_init.h"
 #include "memx_fs.h"
@@ -19,6 +18,7 @@ static u32 fs_debug_en;
 static u32 pcie_lane_no = 2;
 static u32 pcie_lane_speed = 3;
 static u32 pcie_aspm;
+static u32 msix = 1;
 u32 mxmf_boot_tick = 30;
 
 ktime_t tx_start_time = 0, tx_end_time = 0;
@@ -40,7 +40,8 @@ module_param(pcie_aspm, uint, 0);
 MODULE_PARM_DESC(pcie_aspm, "Internal chip2chip pcie link aspm control:: 0-FW_default(default) 1-L0_only 2-L0sL1 3-L0sL1.1");
 module_param(mxmf_boot_tick, uint, 0);
 MODULE_PARM_DESC(mxmf_boot_tick, "MXMF wait boot tick:: Around 30 ticks equals 1 second(default: 30)");
-
+module_param(msix, uint, 0);
+MODULE_PARM_DESC(msix, "msix enable:: 0-alloc msi only  1-alloc msix first and then msi(default)");
 
 #define THROUGHPUT_ADD(current_size, additional_size) \
 	do { \
@@ -139,17 +140,15 @@ static ssize_t memx_pcie_dummy_read(struct memx_pcie_dev *memx_dev)
 	s32 indicator = -ERESTARTSYS;
 	s32 wq_status = 0;
 
-	if (!memx_dev || !memx_dev->pDev) {
-		pr_info("memryx: memx_pcie_dummy_read: warning -ENODEV\n");
-	}
+	if (!memx_dev || !memx_dev->pDev)
+		pr_info("memryx: %s: warning -ENODEV\n", __func__);
 
 	// Read data from device until there is empty.
 	if (!kfifo_out_locked(&memx_dev->rx_msix_fifo, &indicator, sizeof(s32), &memx_dev->mpu_data.rx_ctrl.lock)) {
 		wq_status = wait_event_interruptible_timeout(memx_dev->mpu_data.rx_ctrl.wq, (kfifo_len(&memx_dev->rx_msix_fifo) != 0), msecs_to_jiffies(100));
 
-		if (wq_status == -ERESTARTSYS) {
+		if (wq_status == -ERESTARTSYS)
 			pr_warn("memryx: fops_read: cancelled by interrupt signal\n");
-		}
 
 		if (wq_status >= 1) {
 			if (!kfifo_out_locked(&memx_dev->rx_msix_fifo, &indicator, sizeof(s32), &memx_dev->mpu_data.rx_ctrl.lock)) {
@@ -319,18 +318,19 @@ static long memx_fops_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 	break;
 	case MEMX_VENDOR_CMD: {
 		size_t i = 0;
-        struct transport_cmd tCmd = {0};
-        struct transport_cmd *pCmd = &tCmd;
-        volatile u8 *vCmd = (volatile u8 *)pCmd;
+		struct transport_cmd tCmd = {0};
+		struct transport_cmd *pCmd = &tCmd;
+
+		_VOLATILE_ u8 *vCmd = (_VOLATILE_ u8 *)pCmd;
+
 		if (copy_from_user((void *)pCmd, (struct transport_cmd *)arg, sizeof(struct transport_cmd))) {
 			pr_err("memryx: MEMX_VENDOR_CMD copy_from_user failed\n");
 			ret = -ENOMEM;
 			goto done;
 		}
 
-        for (i = 0; i < sizeof(struct transport_cmd); i++) {
-            memx_dev->mpu_data.mmap_fw_cmd_buffer_base[i] = vCmd[i];
-        }
+		for (i = 0; i < sizeof(struct transport_cmd); i++)
+			memx_dev->mpu_data.mmap_fw_cmd_buffer_base[i] = vCmd[i];
 
 		switch (pCmd->SQ.subOpCode) {
 		case DFP_DOWNLOAD_WEIGHT_MEMORY:
@@ -343,9 +343,8 @@ static long memx_fops_ioctl(struct file *filp, u32 cmd, unsigned long arg)
 			break;
 		}
 
-        for (i = 0; i < sizeof(struct transport_cmd); i++) {
-            vCmd[i] = memx_dev->mpu_data.mmap_fw_cmd_buffer_base[i];
-        }
+		for (i = 0; i < sizeof(struct transport_cmd); i++)
+			vCmd[i] = memx_dev->mpu_data.mmap_fw_cmd_buffer_base[i];
 
 		if (copy_to_user((void __user *)arg, (void *) pCmd, sizeof(struct transport_cmd))) {
 			pr_err("memryx: fops_ioctl: MEMX_SET_DEVICE_FEATURE copy_to_user failed\n");
@@ -532,13 +531,13 @@ static ssize_t memx_fops_write(struct file *filp, const char __user *buf, size_t
 	pr_info("memryx: fops_write: target_chip_id(%d)\n", target_chip_id);
 #endif
 
-	if (target_chip_id == 0 && memx_dev->mpu_data.hw_info.chip.roles[target_chip_id] == ROLE_SINGLE) {
+	if (target_chip_id == 0 && memx_dev->mpu_data.hw_info.chip.roles[target_chip_id] == ROLE_SINGLE && memx_dev->bar_mode != MEMXBAR_4BAR_BAR0VB_BAR2CI_BAR4MSIX_BAR5SRAM) {
 		chip0_igr_sram_buf = (_VOLATILE_ u32 *)(memx_dev->mpu_data.mmap_chip0_sram_buffer_base + (memx_dev->mpu_data.hw_info.fw.ingress_dcore_mapping_sram_base[target_chip_id] - memx_dev->mpu_data.hw_info.fw.bar1_mapping_sram_base));
 		chip0_igr_sram_buf[1] = count;
 		chip0_igr_sram_buf[3] = 0x1;
 	} else {
 		tx_start_time = ktime_get();
-		memx_xflow_trigger_mpu_sw_irq(memx_dev, target_chip_id, move_sram_data_to_di_port_idx_5);
+		memx_pcie_trigger_device_irq(memx_dev, target_chip_id, move_sram_data_to_di_port_idx_5);
 	}
 
 	do {
@@ -627,7 +626,8 @@ static s32 memx_fops_mmap(struct file *filp, struct vm_area_struct *vma)
 #endif
 		} break;
 		case MEMX_PCIE_BAR0_MMAP_SIZE_16MB:
-		case MEMX_PCIE_BAR0_MMAP_SIZE_64MB: {
+		case MEMX_PCIE_BAR0_MMAP_SIZE_64MB:
+		case MEMX_PCIE_BAR0_MMAP_SIZE_256KB: {
 			// mapping xflow_conf to user
 			ret = remap_pfn_range(vma, vma->vm_start,
 					(memx_dev->bar_info[memx_dev->xflow_conf_bar_idx].base) >> PAGE_SHIFT, map_size,
@@ -639,15 +639,27 @@ static s32 memx_fops_mmap(struct file *filp, struct vm_area_struct *vma)
 			ret = -1;
 		} break;
 		}
-	} else if ((map_offs == MEMX_PCIE_BAR0_MMAP_SIZE_16MB) || (map_offs == MEMX_PCIE_BAR0_MMAP_SIZE_64MB)) {
+	} else if ((map_offs == MEMX_PCIE_BAR0_MMAP_SIZE_16MB) || (map_offs == MEMX_PCIE_BAR0_MMAP_SIZE_64MB) ||
+				(map_offs == MEMX_PCIE_BAR0_MMAP_SIZE_256KB)) {
 		if (((map_offs == MEMX_PCIE_BAR0_MMAP_SIZE_16MB) && (map_size != MEMX_PCIE_BAR0_MMAP_SIZE_16MB)) ||
-			((map_offs == MEMX_PCIE_BAR0_MMAP_SIZE_64MB) && (map_size != MEMX_PCIE_BAR0_MMAP_SIZE_64MB))) {
-			pr_err("memryx: fops_mmap: wrong map_size: %ld\n", map_size);
+			((map_offs == MEMX_PCIE_BAR0_MMAP_SIZE_64MB) && (map_size != MEMX_PCIE_BAR0_MMAP_SIZE_64MB)) ||
+			((map_offs == MEMX_PCIE_BAR0_MMAP_SIZE_256KB) && (map_size != MEMX_PCIE_BAR0_MMAP_SIZE_512KB))) {
+			pr_err("memryx: fops_mmap: wrong map_size: %ld map_offs %ld\n", map_size, map_offs);
 			ret = -1;
 		} else {
 			// mapping xflow_vbuf to user
 			ret = remap_pfn_range(vma, vma->vm_start,
 					(memx_dev->bar_info[memx_dev->xflow_vbuf_bar_idx].base) >> PAGE_SHIFT, map_size,
+					pgprot_noncached(vma->vm_page_prot));
+		}
+	} else if (map_offs == MEMX_PCIE_BAR0_MMAP_SIZE_4KB) {
+		if (map_size != MEMX_PCIE_BAR0_MMAP_SIZE_4KB) {
+			pr_err("fops_mmap: wrong map_size: %ld map_offs %ld\n", map_size, map_offs);
+			ret = -1;
+		} else {
+			// mapping device irq base to user
+			ret = remap_pfn_range(vma, vma->vm_start,
+					(memx_dev->bar_info[memx_dev->device_irq_bar_idx].base) >> PAGE_SHIFT, map_size,
 					pgprot_noncached(vma->vm_page_prot));
 		}
 	} else {
@@ -727,13 +739,13 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 	pci_set_master(pDev);
 	// Set the DMA mask size
 	ret = dma_set_mask_and_coherent(&pDev->dev, DMA_BIT_MASK(64));
-	if (!ret) {
-#ifdef DEBUG
-		pr_info("memryx: enabled 32 bit dma for %0x:%0x\n", pDev->vendor, pDev->device);
-#endif
-	} else {
-		pr_err("memryx: error(%d) enabling dma for %0x:%0x\n", ret, pDev->vendor, pDev->device);
-		goto err_dma_init;
+	if (ret) {
+		pr_info("memryx: 64-bit DMA not supported, falling back to 32-bit\n");
+		ret = dma_set_mask_and_coherent(&pDev->dev, DMA_BIT_MASK(32));
+		if (ret) {
+			pr_err("memryx: 32-bit DMA also not supported!\n");
+			goto err_dma_init;
+		}
 	}
 
 #if (KERNEL_VERSION(5, 13, 0) > _LINUX_VERSION_CODE_)
@@ -818,14 +830,10 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 		goto err_bar_init;
 	}
 
-	msix_vec_count = pci_msix_vec_count(pDev);
-	if (msix_vec_count <= 0) {
-		pr_err("memryx: failed to get number of MSX-X interrupt vectors available on device\n");
-		ret = -ENODEV;
-		goto err_bar_init;
-	}
+	msix_vec_count = (pci_msix_vec_count(pDev) > pci_msi_vec_count(pDev)) ? pci_msix_vec_count(pDev): pci_msi_vec_count(pDev);
+
 #ifdef DEBUG
-	pr_info("memryx: msix_vec_count = 0x%x\n", msix_vec_count);
+	pr_info("memryx: msix/msi vec_count = 0x%x/0x%x \n", pci_msix_vec_count(pDev), pci_msi_vec_count(pDev));
 #endif
 	// We can do some verdor init and setting according to our own configuration space registers (64 - 256 Byte)
 	memx_dev->int_info.max_hw_support_msix_count = msix_vec_count;
@@ -918,6 +926,21 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 		#ifdef DEBUG
 		pr_info("memryx: MEMX 1BAR-1MB\r\n");
 		#endif
+	} else if ((memx_dev->bar_info[0].size == MEMX_PCIE_BAR0_MMAP_SIZE_512KB ) && (memx_dev->bar_info[2].size == MEMX_PCIE_BAR0_MMAP_SIZE_256KB) &&
+			   (memx_dev->bar_info[4].size == MEMX_PCIE_BAR0_MMAP_SIZE_4KB) && (memx_dev->bar_info[5].size == MEMX_PCIE_BAR1_MMAP_SIZE_1MB)) {
+
+		memx_dev->bar_mode = MEMXBAR_4BAR_BAR0VB_BAR2CI_BAR4MSIX_BAR5SRAM;
+
+		memx_dev->xflow_conf_bar_idx = BAR2;
+		memx_dev->xflow_vbuf_bar_idx = BAR0;
+		memx_dev->sram_bar_idx = BAR5;
+		memx_dev->device_irq_bar_idx = BAR4;
+		memx_dev->xflow_conf_bar_offset = XFLOW_CONFIG_REG_PREFIX;
+		memx_dev->xflow_vbuf_bar_offset = XFLOW_VIRTUAL_BUFFER_PREFIX;
+
+		#ifdef DEBUG
+		pr_info("MEMX 4BAR-VB+CI+MSIX+SRAM\r\n");
+		#endif
 	} else if (((memx_dev->bar_info[0].size == MEMX_PCIE_BAR0_MMAP_SIZE_16MB) || (memx_dev->bar_info[0].size == MEMX_PCIE_BAR0_MMAP_SIZE_64MB)) &&
 			   ((memx_dev->bar_info[2].size == MEMX_PCIE_BAR0_MMAP_SIZE_16MB) || (memx_dev->bar_info[2].size == MEMX_PCIE_BAR0_MMAP_SIZE_64MB)) &&
 			   (memx_dev->bar_info[4].size == MEMX_PCIE_BAR1_MMAP_SIZE_1MB)) {
@@ -944,6 +967,7 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 
 	pci_set_drvdata(pDev, memx_dev);
 
+	memx_dev->msix = msix;
 	memx_dev->mpu_data.hw_info.fw.bar0_mapping_mpu_base = MPU_REGISTER_BASE;
 	memx_dev->mpu_data.hw_info.fw.bar1_mapping_sram_base = MPU_SRAM_BASE;
 	memx_dev->mpu_data.hw_info.fw.firmware_download_sram_base = MPU_FW_DL_BASE;
@@ -954,7 +978,6 @@ static s32 memx_pcie_probe(struct pci_dev *pDev, const struct pci_device_id *id)
 	memx_dev->mpu_data.mmap_chip0_sram_buffer_base = (u8 *)(memx_dev->bar_info[memx_dev->sram_bar_idx].iobase);
 
 	memx_insert_device(memx_dev);
-	memx_enable_device_msix_capability(memx_dev);
 
 	// Create device node here
 	cdev_init(&memx_dev->char_cdev, &memx_pcie_fops);
@@ -1093,7 +1116,6 @@ static void memx_pcie_remove(struct pci_dev *pDev)
 	cdev_del(&memx_dev->char_cdev);
 
 	memx_deinit_msix_irq(memx_dev);
-	memx_disable_device_msix_capability(memx_dev);
 
 	wake_up_interruptible(&memx_dev->mpu_data.rx_ctrl.wq);
 	for (chip_id = 0; chip_id < MAX_SUPPORT_CHIP_NUM; chip_id++)
@@ -1126,6 +1148,35 @@ static void memx_pcie_remove(struct pci_dev *pDev)
 	pr_info("memryx: memx_remove: pcie remove success\n");
 }
 
+void memx_pcie_trigger_device_irq(struct memx_pcie_dev *memx_dev, u8 chip_id, enum xflow_mpu_sw_irq_idx sw_irq_idx)
+{
+	u32 write_value = 0;
+
+	if (memx_xflow_basic_check(memx_dev, chip_id)) {
+		pr_err("memx_pcie_trigger_device_irq: basic check fail.\n");
+	} else {
+		switch (sw_irq_idx) {
+		case reset_device_idx_3:
+		case fw_cmd_idx_4:
+		case move_sram_data_to_di_port_idx_5:
+		case init_wtmem_and_fmem_idx_6:
+		case reset_mpu_idx_7:
+			if (memx_dev->bar_mode != MEMXBAR_4BAR_BAR0VB_BAR2CI_BAR4MSIX_BAR5SRAM) {
+				write_value = (0x1 << sw_irq_idx);
+				memx_xflow_write(memx_dev, chip_id, AHB_HUB_IRQ_EN_BASE, 0x0, write_value, true);
+			} else {
+				volatile uint32_t *device_irq_register_addr = NULL;
+				write_value = sw_irq_idx - 2;
+				device_irq_register_addr = (u32*)(memx_dev->bar_info[memx_dev->device_irq_bar_idx].iobase + MEMX_PCIE_IRQ_OFFSET(chip_id, write_value));
+				*device_irq_register_addr = chip_id;
+			}
+		break;
+		default:
+			pr_err("Invalid sw_irq_idx(%u), it should not be used.\n", sw_irq_idx);
+		}
+	}
+}
+
 #ifdef CONFIG_PM
 static int memx_pcie_suspend(struct pci_dev *pDev, pm_message_t mesg)
 {
@@ -1139,7 +1190,6 @@ static int memx_pcie_suspend(struct pci_dev *pDev, pm_message_t mesg)
 
 		down(&memx_dev->mutex);
 		memx_deinit_msix_irq(memx_dev);
-		memx_disable_device_msix_capability(memx_dev);
 		up(&memx_dev->mutex);
 
 		pDev->dev.power.power_state = mesg;
@@ -1158,7 +1208,6 @@ static int memx_pcie_resume(struct pci_dev *pDev)
 
 	if (pDev->dev.power.power_state.event != PM_EVENT_ON) {
 		pr_info("memryx: into %s\n", __func__);
-		memx_enable_device_msix_capability(memx_dev);
 		memx_fw_bin.request_firmware_update_in_linux = true;
 		strscpy(&memx_fw_bin.name[0], FIRMWARE_BIN_NAME, FILE_NAME_LENGTH - 1);
 		memx_fw_bin.buffer = NULL;
