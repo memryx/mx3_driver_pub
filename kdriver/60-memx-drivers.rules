@@ -1,0 +1,2 @@
+# memryx chip permissions -- required for USB dev nodes
+KERNEL=="memx*", MODE="0666", OPTIONS="last_rule"
