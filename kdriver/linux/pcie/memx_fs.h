@@ -35,6 +35,9 @@ enum memx_fs_cmd_cb_argc {
 	MAX_FS_CMD_ARGC_NUM = FS_CMD_WRITE_ARGC,
 };
 
+#define MEMX_CHIPMSIMAPADDR	0x5C000000
+#define MEMX_CHIPMSITABADDR	0x400FE000
+
 enum memx_fs_hif_type {
 	MEMX_FS_HIF_NONE,
 	MEMX_FS_HIF_PROC,
@@ -54,6 +57,7 @@ union memx_fs_hif {
 		struct proc_dir_entry *i2ctrl_entry;
 		struct proc_dir_entry *gpio_entry;
 		struct proc_dir_entry *throughput_entry;
+		struct proc_dir_entry *frequency_entry;
 	} proc;
 	struct {
 		struct kobject *root_dir;
@@ -71,9 +75,11 @@ s32 memx_fs_init(struct memx_pcie_dev *memx_dev);
 void memx_fs_deinit(struct memx_pcie_dev *memx_dev);
 
 s32 memx_fs_cmd_handler(struct memx_pcie_dev *memx_dev, u8 argc, char **argv);
+s32 memx_msi_trigger_handler(struct memx_pcie_dev *memx_dev, u8 argc, char **argv);
 s32 memx_fs_parse_cmd_and_exec(struct memx_pcie_dev *memx_dev, const char __user *user_input_buf, size_t user_input_buf_size);
 s32 memx_fs_parse_i2ctrl_and_exec(struct memx_pcie_dev *memx_dev, const char __user *user_input_buf, size_t user_input_buf_size);
 s32 memx_fs_parse_gpioctrl_and_exec(struct memx_pcie_dev *memx_dev, const char __user *user_input_buf, size_t user_input_buf_size);
+void memx_fs_get_frequency(struct memx_pcie_dev *memx_dev, u32 *data, u8 chip_id);
 u32 memx_crc32(const uint8_t *data, size_t length);
 extern void memx_admin_trigger(struct memx_pcie_dev *memx_dev, uint8_t chip_id, struct transport_cmd *pCmd);
 extern enum CASCADE_PLUS_ADMINCMD_ERROR_STATUS memx_admin_fetch_result(struct memx_pcie_dev *memx_dev, uint8_t chip_id, struct transport_cmd *cmd);

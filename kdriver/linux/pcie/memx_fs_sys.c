@@ -443,6 +443,32 @@ static ssize_t throughput_show(struct kobject *kobj, struct kobj_attribute *attr
 	return res;
 }
 
+static ssize_t frequency_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	s32 res = 0, len;
+	u8 chip_id;
+	char *to_user_buf_pos = buf;
+	struct memx_pcie_dev *memx_dev = NULL;
+	u8 idx = 0;
+	u32 data[2];
+
+	for (idx = 0; idx < 8; idx++) {
+		if (g_kobj_memx_dev_map[idx].sys_kobj && g_kobj_memx_dev_map[idx].sys_kobj == kobj) {
+			memx_dev = g_kobj_memx_dev_map[idx].memx_dev;
+			break;
+		}
+	}
+
+	for (chip_id = 0; chip_id < memx_dev->mpu_data.hw_info.chip.total_chip_cnt; chip_id++) {
+		memx_fs_get_frequency(memx_dev, &data[0], chip_id);
+		len = sprintf(to_user_buf_pos, "CHIP(%d) Frequency %d MHz, %d MHz\n", chip_id, data[1], data[0]);
+		to_user_buf_pos += len;
+		res += len;
+	}
+
+	return res;
+}
+
 static ssize_t cmd_store(struct kobject *kobj, struct kobj_attribute *attr, const char *user_input_buf, size_t user_input_buf_size)
 {
 	s32 ret = -EINVAL;
@@ -636,6 +662,32 @@ static ssize_t thermalthrottling_store(struct kobject *kobj, struct kobj_attribu
 	return user_input_buf_size;
 }
 
+static ssize_t hitcount_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	s32 res = 0, len;
+	char *to_user_buf_pos = buf;
+	int i = 0;
+
+	len = sprintf(to_user_buf_pos, "#MSI-HitCount::\n");
+	to_user_buf_pos += len;
+	res += len;
+	for (i = 0; i < MEMX_MAX_MSIX_NUMBER; i += 4) {
+		len = sprintf(to_user_buf_pos, "MSI(%3u):: %10u %10u %10u %10u\n", i, g_hitcount_info.msi_hitcount[i], g_hitcount_info.msi_hitcount[i+1], g_hitcount_info.msi_hitcount[i+2], g_hitcount_info.msi_hitcount[i+3]);
+		to_user_buf_pos += len;
+		res += len;
+	}
+
+	len = sprintf(to_user_buf_pos, "#Handshaking-HitCount::\n");
+	to_user_buf_pos += len;
+	res += len;
+	for (i = 0; i < MEMX_MAX_SW_IRQ_NUMBER; i += 4) {
+		len = sprintf(to_user_buf_pos, "HSK(%3u):: %10u %10u %10u %10u\n", i, g_hitcount_info.sw_irq_hitcount[i], g_hitcount_info.sw_irq_hitcount[i+1], g_hitcount_info.sw_irq_hitcount[i+2], g_hitcount_info.sw_irq_hitcount[i+3]);
+		to_user_buf_pos += len;
+		res += len;
+	}
+
+	return res;
+}
 
 static struct kobj_attribute g_memx_sysfs_attr		 = __ATTR_RW(cmd);
 static struct kobj_attribute g_memx_sysfs_debug_attr   = __ATTR_RW(debug);
@@ -647,7 +699,8 @@ static struct kobj_attribute g_memx_sysfs_mpuuti_attr  = __ATTR_RO(utilization);
 static struct kobj_attribute g_memx_sysfs_temper_attr  = __ATTR_RO(temperature);
 static struct kobj_attribute g_memx_sysfs_thermalthrottling_attr = __ATTR_RW(thermalthrottling);
 static struct kobj_attribute g_memx_sysfs_throughput_attr = __ATTR_RO(throughput);
-
+static struct kobj_attribute g_memx_sysfs_frequency_attr = __ATTR_RO(frequency);
+static struct kobj_attribute g_memx_sysfs_hitcount_attr = __ATTR_RO(hitcount);
 
 s32 memx_fs_sys_init(struct memx_pcie_dev *memx_dev)
 {
@@ -719,6 +772,10 @@ s32 memx_fs_sys_init(struct memx_pcie_dev *memx_dev)
 		pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed\n");
 		return -ENOMEM;
 	}
+	if (sysfs_create_file(memx_dev->fs.hif.sys.root_dir, &g_memx_sysfs_frequency_attr.attr)) {
+		pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed\n");
+		return -ENOMEM;
+	}
 	if (memx_dev->fs.debug_en) {
 		if (sysfs_create_file(memx_dev->fs.hif.sys.root_dir, &g_memx_sysfs_thermalthrottling_attr.attr)) {
 			pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed\n");
@@ -729,7 +786,10 @@ s32 memx_fs_sys_init(struct memx_pcie_dev *memx_dev)
 			return -ENOMEM;
 		}
 	}
-
+	if (sysfs_create_file(memx_dev->fs.hif.sys.root_dir, &g_memx_sysfs_hitcount_attr.attr)) {
+		pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed\n");
+		return -ENOMEM;
+	}
 	g_kobj_memx_dev_map[memx_dev->minor_index].sys_kobj = memx_dev->fs.hif.sys.root_dir;
 	g_kobj_memx_dev_map[memx_dev->minor_index].memx_dev = memx_dev;
 

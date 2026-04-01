@@ -1,3 +1,21 @@
+/* Copyright (c) 2023-2026 MemryX Inc.
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -10,9 +28,10 @@
 #include <time.h>
 #include <stdint.h>
 
-#define version "V1.0"
+#define version "V1.1"
 
 #define FSBL_SIZE_MAX 	0x40000
+#define FSBL_BIN 	"huron-val-app.bin"
 
 // Make the SDK console work in the debugger
 #define printf(...) \
@@ -100,7 +119,7 @@ int main(int argc, char **argv)
 		default:
 			fprintf (stderr, "Unknown option `-%c'.\n", (char)c);
 			abort ();
-		}
+		}	
 	}
 
 	if(verbose) {
@@ -128,11 +147,11 @@ err_retry:
 		printf("(DEICE%d): BAR4: Base Address: 0x%016llX  Size=0x%08lX\n", j+1, pbase[j][4], psize[j][4]);
 		printf("(DEICE%d): BAR5: Base Address: 0x%016llX  Size=0x%08lX\n", j+1, pbase[j][5], psize[j][5]);
 		}
-
+		
 		if ((fd = open("/dev/mem", O_RDWR | O_SYNC)) == -1) {
 			printf("Access /dev/mem failed\n");
 			return -1;
-		}
+		}	
 
 		isFlashBoot = 0;
 		if((psize[j][0] == 0x10000000) && (psize[j][1] == 0x100000)) {
@@ -147,21 +166,23 @@ err_retry:
 			xflow_vbuf_base = (u32 *) &(vptr[0x00000000/sizeof(u32)]);
 			//isFlashBoot = 1;
 		} else if(((psize[j][0] == 0x1000000) && (psize[j][2] == 0x1000000)&& (psize[j][4] == 0x100000)) ||
-				  ((psize[j][0] == 0x4000000) && (psize[j][2] == 0x4000000)&& (psize[j][4] == 0x100000)) ) {
+				  ((psize[j][0] == 0x4000000) && (psize[j][2] == 0x4000000)&& (psize[j][4] == 0x100000)) ||
+				  ((psize[j][0] == 0x0080000) && (psize[j][2] == 0x0080000)&& (psize[j][4] == 0x100000)) ||
+				  ((psize[j][0] == 0x0080000) && (psize[j][2] == 0x0040000)&& (psize[j][4] == 0x1000)&& (psize[j][5] == 0x100000))) {
 			vptr = (u32 *)mmap(NULL, psize[j][0], PROT_READ|PROT_WRITE, MAP_SHARED, fd, pbase[j][0]);
 			xflow_vbuf_base = (u32 *) &(vptr[0]);
 			vptr = (u32 *)mmap(NULL, psize[j][2], PROT_READ|PROT_WRITE, MAP_SHARED, fd, pbase[j][2]);
-			xflow_cnfg_base = (u32 *) &(vptr[0]);
+			xflow_cnfg_base = (u32 *) &(vptr[0]);		
 			//isFlashBoot = 1;
 		} else {
 			printf("None Supported BAR Mapping\n");
-			close(fd);
+			close(fd);	
 			return -1;
 		}
 
 		if (filename)
 			fsbl_bin=fopen(filename,"rb");
-
+		
 		if(fsbl_bin != NULL) {
 			fseek(fsbl_bin,0L,SEEK_END);
 			imgSize = ftell(fsbl_bin);
@@ -172,16 +193,16 @@ err_retry:
 			imageVersion = buffer[0x6F0C>>2];
 			imageDate    = buffer[0x6F10>>2];
 			imageMODEL   = buffer[0x6FF8>>2];
-		}
-
+		} 
+		
 		//printf("0x%08X\n", memx_read32(0x20000100));
 		if(((memx_read32(0x20000100) >> 7) & 0x3) == 0x0) {
 			isFlashBoot = 1;
 		} else {
 			isFlashBoot = 0;
 		}
-
-
+		
+		
 		memx_write32(0x20000500, 0x0);
 		if(verbose)
 			printf("(DEICE%d): CHIP-A%d / %s boot\n", j+1, (memx_read32(0x20000500)==0x5)?1:0, isFlashBoot ? "FLASH" : "PCIE");
@@ -198,7 +219,7 @@ err_retry:
 					if(verbose)
 						printf("(DEICE%d): DIFFERENT with the image firmware version\n", j+1);
 				}
-			}
+			}		
 		}
 
 		if(devid == (j+1)) {
@@ -213,8 +234,8 @@ err_retry:
 
 
 		/* Close the memory */
-		close(fd);
-
+		close(fd);		
+		
 		if(((psize[j][0] == 0x1000000) && (psize[j][2] == 0x1000000)&& (psize[j][4] == 0x100000)) ||
 		   ((psize[j][0] == 0x4000000) && (psize[j][2] == 0x4000000)&& (psize[j][4] == 0x100000)) ) {
 			err = munmap(xflow_cnfg_base, psize[j][0]);
@@ -225,12 +246,12 @@ err_retry:
 		if(err != 0){
 			printf("UnMapping Failed\n");
 			return -1;
-		}
+		}		
 
 		/* Close the FSBL image file */
 		if (fsbl_bin)
 			fclose(fsbl_bin);
-
+		
 	}
 
 	if(verbose) {
@@ -240,9 +261,9 @@ err_retry:
 			printf("ReturnCode DEVICE%d %s boot\n", devid, ret? "FLASH":"PCIE");
 		} else if (retmod == 2) {
 			printf("ReturnCode DEVICE%d VERSION 0x%08X\n", devid, ret);
-		}
+		}		
 	}
-
+	
 	printf("0x%X\n", ret);
 	return ret;
 }

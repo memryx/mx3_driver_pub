@@ -89,6 +89,7 @@ static irqreturn_t memx_firmware_msix_ack_isr(s32 irq, void *data)
 				// memx_enable_msix(memx_dev);
 				return IRQ_HANDLED;
 			}
+			g_hitcount_info.msi_hitcount[msix_idx]++;
 #ifdef DEBUG
 			pr_info("memryx: isr: driver processed pci_dev(%0x:%0x), msix irq(%d).\n", memx_dev->pDev->vendor, memx_dev->pDev->device, irq);
 			pr_info("memryx: isr: %d-th msix usage is %s\n", msix_idx, memx_get_msix_usage_by_irq(memx_dev, irq));
@@ -118,7 +119,7 @@ static irqreturn_t memx_egress_dcore_isr(s32 irq, void *data)
 				// memx_enable_msix(memx_dev);
 				return IRQ_HANDLED;
 			}
-
+			g_hitcount_info.msi_hitcount[msix_idx]++;
 			chip_idx = (msix_idx - 1) >> 1;
 
 #ifdef DEBUG
@@ -151,6 +152,7 @@ static irqreturn_t memx_ingress_dcore_isr(s32 irq, void *data)
 				// memx_enable_msix(memx_dev);
 				return IRQ_HANDLED;
 			}
+			g_hitcount_info.msi_hitcount[msix_idx]++;
 #ifdef DEBUG
 			pr_info("memryx: isr: driver processed pci_dev(%0x:%0x), msix irq(%d).\n", memx_dev->pDev->vendor, memx_dev->pDev->device, irq);
 			pr_info("memryx: isr: %d-th msix usage is %s\n", msix_idx, memx_get_msix_usage_by_irq(memx_dev, irq));

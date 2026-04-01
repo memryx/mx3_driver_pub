@@ -66,7 +66,7 @@ enum CASCADE_PLUS_ADMINCMD_ERROR_STATUS {
 	ERROR_STATUS_NO_ERROR 					= 0x0,
 	ERROR_STATUS_PARAMETER_FAIL 			= 0x1,
 	ERROR_STATUS_OPCODE_NOT_SUPPORT_FAIL 	= 0x2,
-	ERROR_STATUS_SUBOP_NOT_SUPPORT_FAIL 	= 0X3,
+	ERROR_STATUS_SUBOP_NOT_SUPPORT_FAIL 	= 0x3,
 	ERROR_STATUS_UNKNOWN_FAIL 				= 0x4,
 	ERROR_STATUS_TIMEOUT_FAIL 				= 0x5,
 	ERROR_STATUS_MAX
@@ -89,6 +89,12 @@ enum memx_pcie_bar_mode {
 	MEMXBAR_XFLOW128MB_SRAM1MB = MEMXBAR_NOTVALID,
 };
 
+enum CASCADE_PLUS_INPUT_DMA_TRIGGER_TYPE {
+  INPUT_DMA_TRIGGER_TYPE_CHIP = 0x0,
+  INPUT_DMA_TRIGGER_TYPE_HOST = 0x1,
+  INPUT_DMA_TRIGGER_TYPE_MAX
+};
+
 struct chip_info {
 	unsigned short generation;
 	unsigned char total_chip_cnt;
@@ -97,6 +103,7 @@ struct chip_info {
 	enum memx_pcie_bar_mode pcie_bar_mode;
 	enum memx_chip_role roles[MAX_SUPPORT_CHIP_NUM];
 	struct mpu_group groups[MAX_SUPPORT_CHIP_NUM];
+	enum CASCADE_PLUS_INPUT_DMA_TRIGGER_TYPE input_dma_trigger_type[MAX_SUPPORT_CHIP_NUM];
 };
 
 struct fw_info {
@@ -200,10 +207,12 @@ enum CMD_FEATURE_ID {
     FID_DEVICE_POWER_ALERT              = 0x0a,
     FID_DEVICE_POWER_ALERT_FREQUENCY    = 0x0b,
     FID_DEVICE_INTERFACE_INFO           = 0x0c,
-    FID_DEVICE_HW_INFO                  = 0x0d,
     FID_DEVICE_I2C_TRANSCEIVE           = 0x0d,
     FID_DEVICE_GPIO                     = 0x0e,
     FID_DEVICE_MPU_UTILIZATION          = 0x0f,
+    FID_DEVICE_HW_INFO                  = 0x10,
+    FID_DEVICE_FREQUENCY_EFFECTIVE      = 0x11,
+    FID_DEVICE_DMA_TRIGGER_TYPE         = 0x12,
     FID_FW_MAX
 };
 

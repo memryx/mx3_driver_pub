@@ -9,6 +9,7 @@
 #include "memx_fw_cmd.h"
 #include "memx_fw_init.h"
 #include "memx_fs.h"
+#include "memx_dma.h"
 
 dev_t g_memx_devno;
 dev_t g_feature_devno;
@@ -27,6 +28,7 @@ u32 tx_time_us = 0, rx_time_us = 0;
 u32 tx_size = 0, rx_size = 0;
 static u32 dma_cohernet_buffer_size = DMA_COHERENT_BUFFER_SIZE_2MB;
 struct memx_throughput_info udrv_throughput_info = {0};
+struct hitcount_info g_hitcount_info = {0};
 
 module_param(g_drv_fs_type, uint, 0);
 MODULE_PARM_DESC(g_drv_fs_type, "debugfs control:: 0-Disable debugfs  1-proc filesys  2-sysfs filesys(default)");
@@ -485,7 +487,7 @@ static ssize_t memx_fops_read(struct file *filp, char __user *buf, size_t count,
 		rx_end_time = ktime_get();
 		THROUGHPUT_ADD(rx_size, *((uint32_t *)(memx_dev->mpu_data.rx_dma_coherent_buffer_virtual_base + 12))); //MEMX_OFMAP_SRAM_COMMON_HEADER_TOTAL_LENGTH_OFFSET
 		THROUGHPUT_ADD(rx_time_us, ktime_us_delta(rx_end_time, rx_start_time));
-		dma_sync_single_for_cpu(&memx_dev->pDev->dev, (dma_addr_t)memx_dev->mpu_data.hw_info.fw.rx_dma_coherent_buffer_base, DMA_COHERENT_BUFFER_SIZE_2MB, DMA_BIDIRECTIONAL);
+		dma_sync_single_for_cpu(&memx_dev->pDev->dev, (dma_addr_t)memx_dev->mpu_data.hw_info.fw.rx_dma_coherent_buffer_base, OFMAP_EGRESS_DCORE_DMA_COHERENT_BUFFER_SIZE_512KB, DMA_BIDIRECTIONAL);
 		if (copy_to_user((void __user *)buf, memx_dev->mpu_data.rx_dma_coherent_buffer_virtual_base, count)) {
 			pr_err("memryx: fops_read: copy egress_dcore_flow_data to user failed\n");
 			indicator = -EFAULT;
@@ -519,7 +521,7 @@ static ssize_t memx_fops_write(struct file *filp, const char __user *buf, size_t
 
 	// Todo: serperate tx_dma_buf for different chip
 	tx_dma_buf = memx_dev->mpu_data.rx_dma_coherent_buffer_virtual_base + IFMAP_INGRESS_DCORE_DMA_COHERENT_BUFFER_SIZE_512KB;
-	dma_sync_single_for_device(&memx_dev->pDev->dev, (dma_addr_t)memx_dev->mpu_data.hw_info.fw.rx_dma_coherent_buffer_base, DMA_COHERENT_BUFFER_SIZE_2MB, DMA_BIDIRECTIONAL);
+	dma_sync_single_for_device(&memx_dev->pDev->dev, (dma_addr_t)(memx_dev->mpu_data.hw_info.fw.rx_dma_coherent_buffer_base + IFMAP_INGRESS_DCORE_DMA_COHERENT_BUFFER_SIZE_512KB), IFMAP_INGRESS_DCORE_DMA_COHERENT_BUFFER_SIZE_512KB, DMA_BIDIRECTIONAL);
 
 	target_chip_id = *(u32 *)(tx_dma_buf + 8);
 	if (target_chip_id >= MAX_SUPPORT_CHIP_NUM) {
@@ -535,9 +537,19 @@ static ssize_t memx_fops_write(struct file *filp, const char __user *buf, size_t
 		chip0_igr_sram_buf = (_VOLATILE_ u32 *)(memx_dev->mpu_data.mmap_chip0_sram_buffer_base + (memx_dev->mpu_data.hw_info.fw.ingress_dcore_mapping_sram_base[target_chip_id] - memx_dev->mpu_data.hw_info.fw.bar1_mapping_sram_base));
 		chip0_igr_sram_buf[1] = count;
 		chip0_igr_sram_buf[3] = 0x1;
+		g_hitcount_info.sw_irq_hitcount[move_sram_data_to_di_port_idx_5]++;
 	} else {
 		tx_start_time = ktime_get();
-		memx_pcie_trigger_device_irq(memx_dev, target_chip_id, move_sram_data_to_di_port_idx_5);
+		if (memx_dev->mpu_data.hw_info.chip.input_dma_trigger_type[target_chip_id] == INPUT_DMA_TRIGGER_TYPE_CHIP) {
+			memx_pcie_trigger_device_irq(memx_dev, target_chip_id, move_sram_data_to_di_port_idx_5);
+		} else {
+			u32 transfersz = (*(u32 *)(tx_dma_buf + 4) + 64);
+			u32 igr_buf_idx = memx_xflow_read(memx_dev,  target_chip_id, MXCNST_IGR_BUF_WPTR, 0, false) & 0x1;
+
+			memx_dma_transfer_mb(memx_dev, target_chip_id, ARMDMA_CH0, 0x58080000, 0x4006D000+(igr_buf_idx<<18), ((transfersz>>1) & ~0x3));
+			memx_dma_transfer_mb(memx_dev, target_chip_id, ARMDMA_CH1, 0x58080000+((transfersz>>1) & ~0x3), 0x4006D000+(igr_buf_idx<<18)+((transfersz>>1) & ~0x3), transfersz - ((transfersz>>1) & ~0x3));
+			g_hitcount_info.sw_irq_hitcount[move_sram_data_to_di_port_idx_5]++;
+		}
 	}
 
 	do {
@@ -1155,7 +1167,9 @@ void memx_pcie_trigger_device_irq(struct memx_pcie_dev *memx_dev, u8 chip_id, en
 	if (memx_xflow_basic_check(memx_dev, chip_id)) {
 		pr_err("memx_pcie_trigger_device_irq: basic check fail.\n");
 	} else {
+		g_hitcount_info.sw_irq_hitcount[sw_irq_idx]++;
 		switch (sw_irq_idx) {
+		case reserve_idx_2:
 		case reset_device_idx_3:
 		case fw_cmd_idx_4:
 		case move_sram_data_to_di_port_idx_5:

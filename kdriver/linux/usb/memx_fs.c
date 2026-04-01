@@ -154,6 +154,36 @@ s32 memx_fs_parse_cmd_and_exec(struct memx_data *memx_dev, const char __user *us
 }
 
 extern int memx_admin_trigger(struct transport_cmd *pCmd, struct memx_data *data);
+void memx_fs_get_frequency(struct memx_data *memx_dev, u32 *data, u8 chip_id)
+{
+	struct transport_cmd cmd = {0};
+
+	cmd.SQ.opCode    = MEMX_ADMIN_CMD_GET_FEATURE;
+	cmd.SQ.subOpCode = FID_DEVICE_FREQUENCY_EFFECTIVE;
+	cmd.SQ.cdw2 = chip_id;
+
+	mutex_lock(&memx_dev->cfglock);
+	memx_admin_trigger(&cmd, memx_dev);
+	mutex_unlock(&memx_dev->cfglock);
+
+	if (cmd.CQ.status == 0) {
+		data[0] = cmd.CQ.data[0];
+	}
+
+	memset(&cmd, 0, sizeof(struct transport_cmd));
+	cmd.SQ.opCode    = MEMX_ADMIN_CMD_GET_FEATURE;
+	cmd.SQ.subOpCode = FID_DEVICE_FREQUENCY;
+	cmd.SQ.cdw2 = chip_id;
+
+	mutex_lock(&memx_dev->cfglock);
+	memx_admin_trigger(&cmd, memx_dev);
+	mutex_unlock(&memx_dev->cfglock);
+
+	if (cmd.CQ.status == 0) {
+		data[1] = cmd.CQ.data[0];
+	}
+}
+
 s32 memx_fs_parse_i2ctrl_and_exec(struct memx_data *memx_dev, const char __user *user_input_buf, size_t user_input_buf_size)
 {
 	s32 ret = -EINVAL;

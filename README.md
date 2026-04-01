@@ -6,7 +6,7 @@
 
 
 <!-- Badges for quick project insights -->
-[![MemryX SDK](https://img.shields.io/badge/MemryX%20SDK-2.0-brightgreen)](https://developer.memryx.com)
+[![MemryX SDK](https://img.shields.io/badge/MemryX%20SDK-2.2-brightgreen)](https://developer.memryx.com)
 
 # MemryX MX3 Linux Driver
 
@@ -83,7 +83,8 @@ make all
 
 * `kdriver` and `flash update tool`: [GPLv2](/kdriver/LICENSE.md)
 * `pymodule`: [MIT](/pymodule/LICENSE.md)
-* `firmware`: Proprietary. See details [here](https://developer.memryx.com/license.html#mx3-firmware-and-windows-driver). *TL;DR*: you're free to use and redistribute exact copies how ever you want, but do not modify, decompile, nor create derivatives.
+* `tools`: [GPLv2+](/tools/flash_update_tool/LICENSE.md)
+* `firmware`: Proprietary. See details [here](https://developer.memryx.com/license.html#mx3-firmware-and-windows-driver). *TL;DR*: you're free to use and redistribute exact copies however you like, but the source is not available.
 
 
 ## See Also

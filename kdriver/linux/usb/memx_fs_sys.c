@@ -238,6 +238,10 @@ static ssize_t verinfo_show(struct kobject *kobj, struct kobj_attribute *attr, c
 	to_user_buf_pos += len;
 	res += len;
 
+    len = sprintf(to_user_buf_pos, "SDK version: %s\n", SDK_RELEASE_VERSION);
+    to_user_buf_pos += len;
+    res += len;
+
 	len = sprintf(to_user_buf_pos, "kdriver version: %s\n", VERSION);
 	to_user_buf_pos += len;
 	res += len;
@@ -436,6 +440,32 @@ static ssize_t throughput_show(struct kobject *kobj, struct kobj_attribute *attr
 	tx_size = 0;
 	rx_time_us = 0;
 	rx_size = 0;
+
+	return res;
+}
+
+static ssize_t frequency_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+{
+	s32 res = 0, len;
+	u8 chip_id;
+	char *to_user_buf_pos = buf;
+	struct memx_data *memx_dev = NULL;
+	u8 idx = 0;
+	u32 data[2];
+
+	for (idx = 0; idx < 8; idx++) {
+		if (g_kobj_memx_dev_map[idx].sys_kobj && g_kobj_memx_dev_map[idx].sys_kobj == kobj) {
+			memx_dev = g_kobj_memx_dev_map[idx].memx_dev;
+			break;
+		}
+	}
+
+	for (chip_id = 0; chip_id < memx_dev->chipcnt; chip_id++) {
+		memx_fs_get_frequency(memx_dev, &data[0], chip_id);
+		len = sprintf(to_user_buf_pos, "CHIP(%d) Frequency %d MHz, %d MHz\n", chip_id, data[1], data[0]);
+		to_user_buf_pos += len;
+		res += len;
+	}
 
 	return res;
 }
@@ -641,6 +671,7 @@ static struct kobj_attribute g_memx_sysfs_mpuuti_attr  = __ATTR_RO(utilization);
 static struct kobj_attribute g_memx_sysfs_temper_attr  = __ATTR_RO(temperature);
 static struct kobj_attribute g_memx_sysfs_thermalthrottling_attr = __ATTR_RW(thermalthrottling);
 static struct kobj_attribute g_memx_sysfs_throughput_attr = __ATTR_RO(throughput);
+static struct kobj_attribute g_memx_sysfs_frequency_attr = __ATTR_RO(frequency);
 
 s32 memx_fs_sys_init(struct memx_data *memx_dev)
 {
@@ -690,6 +721,10 @@ s32 memx_fs_sys_init(struct memx_data *memx_dev)
 	}
 	if (sysfs_create_file(memx_dev->fs.hif.sys.root_dir, &g_memx_sysfs_temper_attr.attr)) {
 		pr_err("memx_fs_sysfs_init: create sysfs attr file fail!!\n");
+		return -ENOMEM;
+	}
+	if (sysfs_create_file(memx_dev->fs.hif.sys.root_dir, &g_memx_sysfs_frequency_attr.attr)) {
+		pr_err("memryx: memx_fs_sysfs_init: create sysfs attr file failed\n");
 		return -ENOMEM;
 	}
 	if (memx_dev->fs.debug_en) {
