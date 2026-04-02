@@ -107,13 +107,14 @@ static s32 memx_proc_qspi_usage(struct seq_file *sfile, void *v)
 	u32 i, base_addr = MXCNST_DATASRAM_BASE;
 	unsigned long timeout;
 	u32 crc_value = 0, crc_check = 1;
-	u32 type_value = 0, type_check = 0;
+	u32 type_value = 0, type_check = 0, tvalue;
 
 	// Release QSPI Rst
-	*((_VOLATILE_ u32 *)(MEMX_GET_CHIP_RMTCMD_PARAM_VIRTUAl_ADDR(memx_dev, 0)))   = 0x20000208;
-	*((_VOLATILE_ u32 *)(MEMX_GET_CHIP_RMTCMD_PARAM2_VIRTUAl_ADDR(memx_dev, 0)))  = 0x700f0036;
-	*((_VOLATILE_ u32 *)(MEMX_GET_CHIP_RMTCMD_COMMAND_VIRTUAl_ADDR(memx_dev, 0))) = MXCNST_MEMXW_CMD;
-	msleep(50);
+	tvalue = memx_xflow_read(memx_dev, 0, 0x20000208, 0, false);
+	if ((tvalue & 0x70000000) != 0x70000000) {
+		memx_xflow_write(memx_dev, 0, 0x20000208, 0, (tvalue | 0x70000000), false);
+		msleep(10);
+	}
 
 	seq_puts(sfile,	 "================================================================================================\n");
 	if (request_firmware(&firmware, FIRMWARE_BIN_NAME, &memx_dev->pDev->dev) < 0) {
@@ -292,6 +293,20 @@ static s32 memx_proc_throughput_usage(struct seq_file *sfile, void *v)
 	return 0;
 }
 
+static s32 memx_proc_frequency_usage(struct seq_file *sfile, void *v)
+{
+	u32 data[2];
+	struct memx_pcie_dev *memx_dev = sfile->private;
+	u8 chip_id = 0;
+
+	for (chip_id = 0; chip_id < memx_dev->mpu_data.hw_info.chip.total_chip_cnt; chip_id++) {
+		memx_fs_get_frequency(memx_dev, &data[0], chip_id);
+		seq_printf(sfile, "CHIP(%d) Frequency %d MHz, %d MHz\n", chip_id, data[1], data[0]);
+	}
+
+	return 0;
+}
+
 static int memx_proc_open(struct inode *inode, struct file *file)
 {
 #if KERNEL_VERSION(5, 17, 11) <= _LINUX_VERSION_CODE_
@@ -379,6 +394,15 @@ static int memx_proc_open_throughput(struct inode *inode, struct file *file)
 	return single_open(file, memx_proc_throughput_usage, pde_data(inode));
 #else
 	return single_open(file, memx_proc_throughput_usage, PDE_DATA(inode));
+#endif
+}
+
+static int memx_proc_open_frequency(struct inode *inode, struct file *file)
+{
+#if KERNEL_VERSION(5, 17, 11) <= _LINUX_VERSION_CODE_
+	return single_open(file, memx_proc_frequency_usage, pde_data(inode));
+#else
+	return single_open(file, memx_proc_frequency_usage, PDE_DATA(inode));
 #endif
 }
 
@@ -596,6 +620,12 @@ static const struct proc_ops proc_temperature_fops = {
 };
 static const struct proc_ops proc_throughput_fops = {
 	.proc_open	= memx_proc_open_throughput,
+	.proc_read	= seq_read,
+	.proc_lseek   = seq_lseek,
+	.proc_release = single_release,
+};
+static const struct proc_ops proc_frequency_fops = {
+	.proc_open	= memx_proc_open_frequency,
 	.proc_read	= seq_read,
 	.proc_lseek   = seq_lseek,
 	.proc_release = single_release,
@@ -822,15 +852,32 @@ s32 memx_fs_proc_init(struct memx_pcie_dev *memx_dev)
 			proc_remove(memx_dev->fs.hif.proc.root_dir);
 			return -EINVAL;
 		}
-	}
 
-	if (memx_dev->fs.debug_en) {
 		memx_dev->fs.hif.proc.throughput_entry = proc_create_data("throughput", 0444, memx_dev->fs.hif.proc.root_dir, &proc_throughput_fops, memx_dev);
 		if (!memx_dev->fs.hif.proc.throughput_entry) {
 			pr_err("memryx: failed to create proc file for throughput_entry!\n");
 			proc_remove(memx_dev->fs.hif.proc.mpu_uti_entry);
 			proc_remove(memx_dev->fs.hif.proc.verinfo_entry);
 			if (memx_dev->fs.debug_en) {
+				proc_remove(memx_dev->fs.hif.proc.thermal_entry);
+				proc_remove(memx_dev->fs.hif.proc.debug_entry);
+				proc_remove(memx_dev->fs.hif.proc.gpio_entry);
+				proc_remove(memx_dev->fs.hif.proc.i2ctrl_entry);
+				proc_remove(memx_dev->fs.hif.proc.qspi_entry);
+			}
+			proc_remove(memx_dev->fs.hif.proc.cmd_entry);
+			proc_remove(memx_dev->fs.hif.proc.root_dir);
+			return -EINVAL;
+		}
+
+		memx_dev->fs.hif.proc.frequency_entry = proc_create_data("frequency", 0444, memx_dev->fs.hif.proc.root_dir, &proc_frequency_fops, memx_dev);
+		if (!memx_dev->fs.hif.proc.frequency_entry) {
+			pr_err("memryx: failed to create proc file for frequency_entry!\n");
+			proc_remove(memx_dev->fs.hif.proc.mpu_uti_entry);
+			proc_remove(memx_dev->fs.hif.proc.verinfo_entry);
+			if (memx_dev->fs.debug_en) {
+				proc_remove(memx_dev->fs.hif.proc.throughput_entry);
+				proc_remove(memx_dev->fs.hif.proc.thermal_entry);
 				proc_remove(memx_dev->fs.hif.proc.debug_entry);
 				proc_remove(memx_dev->fs.hif.proc.gpio_entry);
 				proc_remove(memx_dev->fs.hif.proc.i2ctrl_entry);
@@ -853,12 +900,13 @@ void memx_fs_proc_deinit(struct memx_pcie_dev *memx_dev)
 		pr_err("memryx: memx_proc_deinit: memx_dev is NULL\n");
 		return;
 	}
-	if (memx_dev->fs.debug_en)
-		proc_remove(memx_dev->fs.hif.proc.thermal_entry);
 	proc_remove(memx_dev->fs.hif.proc.temperature_entry);
 	proc_remove(memx_dev->fs.hif.proc.mpu_uti_entry);
 	proc_remove(memx_dev->fs.hif.proc.verinfo_entry);
 	if (memx_dev->fs.debug_en) {
+		proc_remove(memx_dev->fs.hif.proc.frequency_entry);
+		proc_remove(memx_dev->fs.hif.proc.throughput_entry);
+		proc_remove(memx_dev->fs.hif.proc.thermal_entry);
 		proc_remove(memx_dev->fs.hif.proc.debug_entry);
 		proc_remove(memx_dev->fs.hif.proc.qspi_entry);
 		proc_remove(memx_dev->fs.hif.proc.gpio_entry);

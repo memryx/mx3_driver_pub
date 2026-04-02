@@ -7,7 +7,8 @@
 #include "memx_fs.h"
 #include "memx_fs_proc.h"
 
-#define VERSION "2.34"
+#define VERSION "2.36"
+#define SDK_RELEASE_VERSION "2.2"
 
 #define DEVICE_NODE_NAME "memx%d"
 #define DEVICE_NODE_NAME_USB "memxchip%d"
@@ -23,7 +24,8 @@
 
 #define DEVICE_NODE_DEFAULT_ACCESS_RIGHT (0666)
 
-#define DEVICE_VENDOR_ID	0x0559
+#define DEVICE_VENDOR_ID        0x0559
+#define DEVICE_VENDOR_ID_MEMRYX 0x38E0
 
 #define ROLE_G0_SINGLE_DEV  0x4006
 #define ROLE_G0_MULTI_FIRST 0x4007
@@ -142,6 +144,7 @@ union memx_fs_hif {
 		struct proc_dir_entry *i2ctrl_entry;
 		struct proc_dir_entry *gpio_entry;
 		struct proc_dir_entry *throughput_entry;
+		struct proc_dir_entry *frequency_entry;
 	} proc;
 	struct {
 		struct kobject *root_dir;

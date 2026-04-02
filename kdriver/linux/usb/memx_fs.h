@@ -53,4 +53,5 @@ s32 memx_fs_cmd_handler(struct memx_data *memx_dev, u8 argc, char **argv);
 s32 memx_fs_parse_cmd_and_exec(struct memx_data *memx_dev, const char __user *user_input_buf, size_t user_input_buf_size);
 s32 memx_fs_parse_i2ctrl_and_exec(struct memx_data *memx_dev, const char __user *user_input_buf, size_t user_input_buf_size);
 s32 memx_fs_parse_gpioctrl_and_exec(struct memx_data *memx_dev, const char __user *user_input_buf, size_t user_input_buf_size);
+void memx_fs_get_frequency(struct memx_data *memx_dev, u32 *data, u8 chip_id);
 #endif

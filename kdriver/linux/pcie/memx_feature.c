@@ -116,12 +116,17 @@ static long _admin_get_feature(struct memx_pcie_dev *memx_dev, struct transport_
 			pci_read_config_dword(memx_dev->pDev, offset + PCI_EXP_LNKCAP, &pCmd->CQ.data[0]);
 			pci_read_config_word(memx_dev->pDev, offset + PCI_EXP_LNKSTA, (u16*)&pCmd->CQ.data[1]);
 		}
-	} else if ((pCmd->SQ.subOpCode == FID_DEVICE_POWERMANAGEMENT) || (pCmd->SQ.subOpCode == FID_DEVICE_FREQUENCY) || (pCmd->SQ.subOpCode == FID_DEVICE_GPIO)) {
+	} else if ((pCmd->SQ.subOpCode == FID_DEVICE_POWERMANAGEMENT) || (pCmd->SQ.subOpCode == FID_DEVICE_FREQUENCY) || (pCmd->SQ.subOpCode == FID_DEVICE_GPIO) ||
+               (pCmd->SQ.subOpCode == FID_DEVICE_DMA_TRIGGER_TYPE)) {
 		uint8_t chip_id = pCmd->SQ.cdw2;
 
 		if (chip_id < memx_dev->mpu_data.hw_info.chip.total_chip_cnt) {
 			memx_admin_trigger(memx_dev, chip_id, pCmd);
 			pCmd->CQ.status = memx_admin_fetch_result(memx_dev, chip_id, pCmd);
+
+			if (pCmd->SQ.subOpCode == FID_DEVICE_DMA_TRIGGER_TYPE) {
+				memx_dev->mpu_data.hw_info.chip.input_dma_trigger_type[chip_id] = pCmd->CQ.data[0];
+			}
 		} else {
 			pCmd->CQ.status = ERROR_STATUS_PARAMETER_FAIL;
 		}
@@ -152,6 +157,10 @@ static long _admin_get_feature(struct memx_pcie_dev *memx_dev, struct transport_
 static long _admin_set_feature(struct memx_pcie_dev *memx_dev, struct transport_cmd *pCmd){
     long    ret     = 0;
     uint8_t chip_id = pCmd->SQ.cdw2;
+
+	if (pCmd->SQ.subOpCode == FID_DEVICE_DMA_TRIGGER_TYPE) {
+		memx_dev->mpu_data.hw_info.chip.input_dma_trigger_type[chip_id] = pCmd->SQ.cdw3;
+	}
 
     if (chip_id < memx_dev->mpu_data.hw_info.chip.total_chip_cnt) {
         memx_admin_trigger(memx_dev, chip_id, pCmd);

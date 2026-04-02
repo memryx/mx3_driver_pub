@@ -11,8 +11,8 @@
 #include "memx_fs.h"
 #include "memx_xflow.h"
 
-#define PCIE_VERSION "1.3.4"
-#define SDK_RELEASE_VERSION "2.1"
+#define PCIE_VERSION "1.3.13"
+#define SDK_RELEASE_VERSION "2.2"
 
 #define PCIE_NAME "memx_pcie_ai_chip"
 
@@ -63,6 +63,7 @@
 #define MXCNST_CHIP_VERSION    (0x20000500)
 #define MXCNST_FW_SYS_TICK     (0x40046f14)
 #define MXCNST_RP_XFLOW_ADDR   (0x60000000)
+#define MXCNST_IGR_BUF_WPTR    (0x40046F88)
 
 #define MEMX_PCIE_IRQ_OFFSET(C, I) ((((15 - (C)) * DEVICE_IRQ_COUNT) + (I)) * 4 + 0x200)
 
@@ -151,6 +152,14 @@ struct memx_pcie_dev {
 
 	struct mutex   adminlock;
 };
+
+#define MEMX_MAX_MSIX_NUMBER 	((MEMRYX_MAX_MSIX_NUMBER + 3) & ~0x3)
+#define MEMX_MAX_SW_IRQ_NUMBER	((max_support_mpu_sw_irq_num + 3) & ~0x3)
+struct hitcount_info {
+	u32 msi_hitcount[MEMX_MAX_MSIX_NUMBER];
+	u32 sw_irq_hitcount[MEMX_MAX_SW_IRQ_NUMBER];
+};
+extern struct hitcount_info g_hitcount_info;
 
 extern struct file_operations memx_feature_fops;
 extern u32 tx_time_us;
