@@ -470,8 +470,10 @@ static ssize_t memx_fops_read(struct file *filp, char __user *buf, size_t count,
 				break;
 			}
 
+#ifdef DEBUG
 			if (wq_status < 1)
 				pr_info("memryx: fops_read: wait timeout 10(s), retrying again\n");
+#endif
 
 		} while (wq_status < 1);
 		if (wq_status >= 1) {
@@ -564,8 +566,10 @@ static ssize_t memx_fops_write(struct file *filp, const char __user *buf, size_t
 			pr_warn("memryx: fops_write: cancelled by interrupt signal\n");
 			break;
 		}
+#ifdef DEBUG
 		if (wq_status < 1)
 			pr_info("memryx: fops_write: wait timeout 1(s), retrying again\n");
+#endif
 
 	} while (wq_status < 1);
 	if (wq_status >= 1) {
